@@ -23,6 +23,10 @@ namespace Insthync.AddressableAssetTools
         public UnityEvent onStart = new UnityEvent();
         public UnityEvent onEnd = new UnityEvent();
         public UnityEvent onFileSizeRetrieving = new UnityEvent();
+        public UnityEvent<AsyncOperationStatus, System.Exception> onUnableToCheckForCatalogUpdates = new UnityEvent<AsyncOperationStatus, System.Exception>();
+        public UnityEvent<List<string>, AsyncOperationStatus, System.Exception> onUnableToUpdateCatalogs = new UnityEvent<List<string>, AsyncOperationStatus, System.Exception>();
+        public UnityEvent<AsyncOperationStatus, System.Exception> onUnableToLoadSettings = new UnityEvent<AsyncOperationStatus, System.Exception>();
+        public UnityEvent<object, AsyncOperationStatus, System.Exception> onUnableToInitialObject = new UnityEvent<object, AsyncOperationStatus, System.Exception>();
         public AddressableAssetFileSizeEvent onFileSizeRetrieved = new AddressableAssetFileSizeEvent();
         public AddressableAssetTotalProgressEvent onDepsDownloading = new AddressableAssetTotalProgressEvent();
         public AddressableAssetTotalProgressEvent onDepsDownloaded = new AddressableAssetTotalProgressEvent();
@@ -68,7 +72,15 @@ namespace Insthync.AddressableAssetTools
                     {
                         string dataAsJson = webRequest.downloadHandler.text;
                         Debug.Log($"Found addressable remote config. {dataAsJson}");
-                        _remoteConfig = JsonConvert.DeserializeObject<AddressableRemoteConfig>(dataAsJson);
+                        try
+                        {
+                            _remoteConfig = JsonConvert.DeserializeObject<AddressableRemoteConfig>(dataAsJson);
+                        }
+                        catch (System.Exception ex)
+                        {
+                            _remoteConfig = null;
+                            Debug.LogError($"Unable to read remote config data {ex.Message}\n{ex.StackTrace}");
+                        }
                     }
                     else
                     {
@@ -107,17 +119,37 @@ namespace Insthync.AddressableAssetTools
             }
 
             Debug.Log("Checking for catalog updates.");
-            AsyncOperationHandle<List<string>> checkForUpdateHandle = Addressables.CheckForCatalogUpdates(false);
-            await checkForUpdateHandle.Task;
-            List<string> catalogsToUpdate = null;
-            if (checkForUpdateHandle.Status == AsyncOperationStatus.Succeeded)
-                catalogsToUpdate = new List<string>(checkForUpdateHandle.Result);
-            Addressables.Release(checkForUpdateHandle);
-
-            if (catalogsToUpdate != null && catalogsToUpdate.Count > 0)
+            List<string> catalogToUpdates = null;
+            AsyncOperationHandle<List<string>> checkForCatalogUpdatesHandle = Addressables.CheckForCatalogUpdates(false);
+            try
             {
-                AsyncOperationHandle<List<IResourceLocator>> updateHandle = Addressables.UpdateCatalogs(true, catalogsToUpdate, false);
-                await updateHandle.Task;
+                await checkForCatalogUpdatesHandle.Task;
+                if (checkForCatalogUpdatesHandle.Status != AsyncOperationStatus.Succeeded)
+                    onUnableToCheckForCatalogUpdates.Invoke(checkForCatalogUpdatesHandle.Status, checkForCatalogUpdatesHandle.OperationException);
+                else
+                    catalogToUpdates = new List<string>(checkForCatalogUpdatesHandle.Result);
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"Unable to check for catalog updates {ex.Message}\n{ex.StackTrace}");
+                onUnableToCheckForCatalogUpdates.Invoke(checkForCatalogUpdatesHandle.Status, ex);
+            }
+            Addressables.Release(checkForCatalogUpdatesHandle);
+
+            if (catalogToUpdates != null && catalogToUpdates.Count > 0)
+            {
+                AsyncOperationHandle<List<IResourceLocator>> updateHandle = Addressables.UpdateCatalogs(true, catalogToUpdates, false);
+                try
+                {
+                    await updateHandle.Task;
+                    if (updateHandle.Status != AsyncOperationStatus.Succeeded)
+                        onUnableToUpdateCatalogs.Invoke(catalogToUpdates, updateHandle.Status, updateHandle.OperationException);
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogError($"Unable to check for catalog updates {ex.Message}\n{ex.StackTrace}");
+                    onUnableToUpdateCatalogs.Invoke(catalogToUpdates, updateHandle.Status, ex);
+                }
                 Addressables.Release(updateHandle);
             }
 
@@ -147,26 +179,58 @@ namespace Insthync.AddressableAssetTools
 
             // Read settings to find which assets will be instantiated
             Debug.Log("Read addressable asset download manager settings.");
-            AsyncOperationHandle<AddressableAssetDownloadManagerSettings> settingsAsyncOp = settingsAssetReference.LoadAssetAsync();
-            await settingsAsyncOp.Task;
-            AddressableAssetDownloadManagerSettings settings = settingsAsyncOp.Result;
+            AddressableAssetDownloadManagerSettings settings = null;
+            AsyncOperationHandle<AddressableAssetDownloadManagerSettings> loadSettingsHandle;
+            loadSettingsHandle = settingsAssetReference.LoadAssetAsync();
+            try
+            {
+                await loadSettingsHandle.Task;
+                settings = loadSettingsHandle.Result;
+                if (loadSettingsHandle.Status != AsyncOperationStatus.Succeeded)
+                {
+                    onUnableToLoadSettings.Invoke(loadSettingsHandle.Status, loadSettingsHandle.OperationException);
+                    Addressables.Release(loadSettingsHandle);
+                    return;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"Unable to load settings {ex.Message}\n{ex.StackTrace}");
+                onUnableToLoadSettings.Invoke(loadSettingsHandle.Status, ex);
+                Addressables.Release(loadSettingsHandle);
+                return;
+            }
             settingsAssetReference.ReleaseAsset();
-            Addressables.Release(settingsAsyncOp);
+            Addressables.Release(loadSettingsHandle);
 
             // Instantiates
             for (int i = 0; i < settings.InitialObjects.Count; ++i)
             {
+                AssetReference assetRef = settings.InitialObjects[i];
+                if (assetRef == null)
+                {
+                    Debug.LogWarning($"Null initial object {i}, skipping...");
+                    continue;
+                }
+                object runtimeKey = assetRef.RuntimeKey;
+                Debug.Log($"Initializing {runtimeKey}");
+                AsyncOperationHandle<GameObject> instantiateOp = Addressables.InstantiateAsync(runtimeKey);
                 try
                 {
-                    Debug.Log($"Initializing {settings.InitialObjects[i].RuntimeKey}");
-                    AsyncOperationHandle<GameObject> instantiateOp = Addressables.InstantiateAsync(settings.InitialObjects[i].RuntimeKey);
                     await instantiateOp.Task;
+                    if (instantiateOp.Status != AsyncOperationStatus.Succeeded)
+                    {
+                        onUnableToInitialObject.Invoke(runtimeKey, instantiateOp.Status, instantiateOp.OperationException);
+                        Addressables.Release(assetRef);
+                        continue;
+                    }
                     Debug.Log($"Initialized {instantiateOp.Result.name}");
                 }
                 catch (System.Exception ex)
                 {
-                    Debug.LogError($"Unable to initialize {settings.InitialObjects[i].RuntimeKey}");
-                    Debug.LogException(ex);
+                    Debug.LogError($"Unable to initialize {runtimeKey} {ex.Message}\n{ex.StackTrace}");
+                    onUnableToInitialObject.Invoke(runtimeKey, instantiateOp.Status, ex);
+                    Addressables.Release(assetRef);
                 }
             }
 
