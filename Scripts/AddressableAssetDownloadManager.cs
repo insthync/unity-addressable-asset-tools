@@ -200,7 +200,6 @@ namespace Insthync.AddressableAssetTools
                 Addressables.Release(loadSettingsHandle);
                 return;
             }
-            settingsAssetReference.ReleaseAsset();
             Addressables.Release(loadSettingsHandle);
 
             // Instantiates
