@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
+using UnityEngine.ResourceManagement.ResourceLocations;
 
 namespace Insthync.AddressableAssetTools
 {
@@ -11,13 +12,26 @@ namespace Insthync.AddressableAssetTools
         private static readonly Dictionary<object, Object> s_loadedAssets = new Dictionary<object, Object>();
         private static readonly Dictionary<object, AsyncOperationHandle> s_assetRefs = new Dictionary<object, AsyncOperationHandle>();
 
-        public static async UniTask<TType> GetOrLoadObjectAsync<TType>(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static async UniTask<AsyncOperationHandle<TType>?> LoadObjectAsync<TType>(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
             where TType : Object
         {
-            if (!assetRef.IsDataValid())
+            // Check if the asset is actually marked as Addressable
+            if (assetRef.IsDataValid())
+            {
+                Debug.LogWarning($"Asset is not marked as Addressable: {assetRef.RuntimeKey}. Ignoring load.");
                 return null;
-            if (s_loadedAssets.TryGetValue(assetRef.RuntimeKey, out Object result))
-                return result as TType;
+            }
+
+            // Check if the Addressable asset exists before loading
+            AsyncOperationHandle<IList<IResourceLocation>> loadResourceLocationsHandle = Addressables.LoadResourceLocationsAsync(assetRef.RuntimeKey);
+            IList<IResourceLocation> locations = await loadResourceLocationsHandle.ToUniTask();
+            loadResourceLocationsHandle.Release();
+            if (locations == null || locations.Count == 0)
+            {
+                Debug.LogWarning($"Addressable asset not found: {assetRef.RuntimeKey}. Ignoring load.");
+                return null;
+            }
+
             AsyncOperationHandle<TType> handler = Addressables.LoadAssetAsync<TType>(assetRef.RuntimeKey);
             handlerCallback?.Invoke(handler);
             TType handlerResult;
@@ -27,18 +41,30 @@ namespace Insthync.AddressableAssetTools
             }
             catch
             {
-                return null;
             }
-            s_loadedAssets[assetRef.RuntimeKey] = handlerResult;
-            s_assetRefs[assetRef.RuntimeKey] = handler;
-            return handlerResult;
+            return handler;
         }
 
-        public static TType GetOrLoadObject<TType>(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static AsyncOperationHandle<TType>? LoadObject<TType>(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
             where TType : Object
         {
-            if (s_loadedAssets.TryGetValue(assetRef.RuntimeKey, out Object result))
-                return result as TType;
+            // Check if the asset is actually marked as Addressable
+            if (assetRef.IsDataValid())
+            {
+                Debug.LogWarning($"Asset is not marked as Addressable: {assetRef.RuntimeKey}. Ignoring load.");
+                return null;
+            }
+
+            // Check if the Addressable asset exists before loading
+            AsyncOperationHandle<IList<IResourceLocation>> loadResourceLocationsHandle = Addressables.LoadResourceLocationsAsync(assetRef.RuntimeKey);
+            IList<IResourceLocation> locations = loadResourceLocationsHandle.WaitForCompletion();
+            loadResourceLocationsHandle.Release();
+            if (locations == null || locations.Count == 0)
+            {
+                Debug.LogWarning($"Addressable asset not found: {assetRef.RuntimeKey}. Ignoring load.");
+                return null;
+            }
+
             AsyncOperationHandle<TType> handler = Addressables.LoadAssetAsync<TType>(assetRef.RuntimeKey);
             handlerCallback?.Invoke(handler);
             TType handlerResult;
@@ -48,10 +74,39 @@ namespace Insthync.AddressableAssetTools
             }
             catch
             {
-                return null;
             }
+            return handler;
+        }
+
+        public static async UniTask<TType> GetOrLoadObjectAsync<TType>(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
+            where TType : Object
+        {
+            if (s_loadedAssets.TryGetValue(assetRef.RuntimeKey, out Object result))
+                return result as TType;
+
+            AsyncOperationHandle<TType>? handler = await assetRef.LoadObjectAsync<TType>(handlerCallback);
+            if (!handler.HasValue)
+                return null;
+
+            TType handlerResult = handler.Value.Result;
             s_loadedAssets[assetRef.RuntimeKey] = handlerResult;
-            s_assetRefs[assetRef.RuntimeKey] = handler;
+            s_assetRefs[assetRef.RuntimeKey] = handler.Value;
+            return handlerResult;
+        }
+
+        public static TType GetOrLoadObject<TType>(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
+            where TType : Object
+        {
+            if (s_loadedAssets.TryGetValue(assetRef.RuntimeKey, out Object result))
+                return result as TType;
+
+            AsyncOperationHandle<TType>? handler = assetRef.LoadObject<TType>(handlerCallback);
+            if (!handler.HasValue)
+                return null;
+
+            TType handlerResult = handler.Value.Result;
+            s_loadedAssets[assetRef.RuntimeKey] = handlerResult;
+            s_assetRefs[assetRef.RuntimeKey] = handler.Value;
             return handlerResult;
         }
 
