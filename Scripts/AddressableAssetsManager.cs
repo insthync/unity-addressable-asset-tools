@@ -22,17 +22,18 @@ namespace Insthync.AddressableAssetTools
                 return null;
             }
 
+            object runtimeKey = assetRef.RuntimeKey;
             // Check if the Addressable asset exists before loading
-            AsyncOperationHandle<IList<IResourceLocation>> loadResourceLocationsHandle = Addressables.LoadResourceLocationsAsync(assetRef.RuntimeKey);
+            AsyncOperationHandle<IList<IResourceLocation>> loadResourceLocationsHandle = Addressables.LoadResourceLocationsAsync(runtimeKey);
             IList<IResourceLocation> locations = await loadResourceLocationsHandle.ToUniTask();
             loadResourceLocationsHandle.Release();
             if (locations == null || locations.Count == 0)
             {
-                Debug.LogWarning($"Addressable asset not found: {assetRef.RuntimeKey}. Ignoring load.");
+                Debug.LogWarning($"Addressable asset not found: {runtimeKey}. Ignoring load.");
                 return null;
             }
 
-            AsyncOperationHandle<TType> handler = Addressables.LoadAssetAsync<TType>(assetRef.RuntimeKey);
+            AsyncOperationHandle<TType> handler = Addressables.LoadAssetAsync<TType>(runtimeKey);
             handlerCallback?.Invoke(handler);
             TType handlerResult;
             try
@@ -55,17 +56,18 @@ namespace Insthync.AddressableAssetTools
                 return null;
             }
 
+            object runtimeKey = assetRef.RuntimeKey;
             // Check if the Addressable asset exists before loading
-            AsyncOperationHandle<IList<IResourceLocation>> loadResourceLocationsHandle = Addressables.LoadResourceLocationsAsync(assetRef.RuntimeKey);
+            AsyncOperationHandle<IList<IResourceLocation>> loadResourceLocationsHandle = Addressables.LoadResourceLocationsAsync(runtimeKey);
             IList<IResourceLocation> locations = loadResourceLocationsHandle.WaitForCompletion();
             loadResourceLocationsHandle.Release();
             if (locations == null || locations.Count == 0)
             {
-                Debug.LogWarning($"Addressable asset not found: {assetRef.RuntimeKey}. Ignoring load.");
+                Debug.LogWarning($"Addressable asset not found: {runtimeKey}. Ignoring load.");
                 return null;
             }
 
-            AsyncOperationHandle<TType> handler = Addressables.LoadAssetAsync<TType>(assetRef.RuntimeKey);
+            AsyncOperationHandle<TType> handler = Addressables.LoadAssetAsync<TType>(runtimeKey);
             handlerCallback?.Invoke(handler);
             TType handlerResult;
             try
@@ -170,7 +172,7 @@ namespace Insthync.AddressableAssetTools
                 tempAsset = asset;
             return tempAsset;
         }
-        
+
         public static TType GetOrLoadObjectOrUseAsset<TType>(this AssetReference assetRef, TType asset, System.Action<AsyncOperationHandle> handlerCallback = null)
             where TType : Object
         {
@@ -181,7 +183,7 @@ namespace Insthync.AddressableAssetTools
                 tempAsset = asset;
             return tempAsset;
         }
-        
+
         public static async UniTask<GameObject> GetOrLoadAssetAsyncOrUsePrefab(this AssetReference assetRef, GameObject prefab, System.Action<AsyncOperationHandle> handlerCallback = null)
         {
             GameObject tempPrefab = null;
@@ -191,7 +193,7 @@ namespace Insthync.AddressableAssetTools
                 tempPrefab = prefab;
             return tempPrefab;
         }
-        
+
         public static GameObject GetOrLoadAssetOrUsePrefab(this AssetReference assetRef, GameObject prefab, System.Action<AsyncOperationHandle> handlerCallback = null)
         {
             GameObject tempPrefab = null;
@@ -245,7 +247,7 @@ namespace Insthync.AddressableAssetTools
             }
             return results.ToArray();
         }
-        
+
         public static async UniTask<GameObject[]> GetOrLoadAssetsAsync(this IEnumerable<AssetReference> assetRefs, System.Action<AsyncOperationHandle> handlerCallback = null)
         {
             List<UniTask<GameObject>> tasks = new List<UniTask<GameObject>>();
@@ -265,7 +267,7 @@ namespace Insthync.AddressableAssetTools
             }
             return results.ToArray();
         }
-        
+
         public static void Release<TAssetRef>(this TAssetRef assetRef)
             where TAssetRef : AssetReference
         {
