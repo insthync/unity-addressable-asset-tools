@@ -16,7 +16,7 @@ namespace Insthync.AddressableAssetTools
             where TType : Object
         {
             // Check if the asset is actually marked as Addressable
-            if (assetRef.IsDataValid())
+            if (!assetRef.IsDataValid())
             {
                 Debug.LogWarning($"Asset is not marked as Addressable: {assetRef.RuntimeKey}. Ignoring load.");
                 return null;
@@ -49,7 +49,7 @@ namespace Insthync.AddressableAssetTools
             where TType : Object
         {
             // Check if the asset is actually marked as Addressable
-            if (assetRef.IsDataValid())
+            if (!assetRef.IsDataValid())
             {
                 Debug.LogWarning($"Asset is not marked as Addressable: {assetRef.RuntimeKey}. Ignoring load.");
                 return null;
