@@ -12,12 +12,14 @@ using UnityEngine.ResourceManagement.ResourceProviders;
 using UnityEngine.SceneManagement;
 using UnityEngine.Networking;
 using UnityEngine.AddressableAssets.Initialization;
+using System.IO;
 
 namespace Insthync.AddressableAssetTools
 {
     public partial class AddressableAssetDownloadManager : MonoBehaviour
     {
         public string remoteConfigUrl;
+        public string cachedClientConfigFileName = "cachedAddressableConfig.json";
         public AssetReferenceDownloadManagerSettings settingsAssetReference;
         [Header("Events")]
         public UnityEvent onStart = new UnityEvent();
@@ -37,7 +39,7 @@ namespace Insthync.AddressableAssetTools
         public long FileSize { get; protected set; } = 0;
         public int LoadedCount { get; protected set; } = 0;
         public int TotalCount { get; protected set; } = 0;
-
+        public string CachedClientConfigPath => Path.Combine(Application.persistentDataPath, cachedClientConfigFileName);
 
         public AddressableRemoteConfig _remoteConfig;
 
@@ -75,6 +77,7 @@ namespace Insthync.AddressableAssetTools
                         try
                         {
                             _remoteConfig = JsonConvert.DeserializeObject<AddressableRemoteConfig>(dataAsJson);
+                            File.WriteAllText(CachedClientConfigPath, dataAsJson);
                         }
                         catch (System.Exception ex)
                         {
@@ -85,6 +88,24 @@ namespace Insthync.AddressableAssetTools
                     else
                     {
                         Debug.LogError($"Not found addressable remote config. ({url}) ({webRequest.error})");
+                    }
+                }
+            }
+
+            if (_remoteConfig == null)
+            {
+                // Try to read from cached local file
+                if (File.Exists(CachedClientConfigPath))
+                {
+                    try
+                    {
+                        string cachedJson = File.ReadAllText(CachedClientConfigPath);
+                        _remoteConfig = JsonConvert.DeserializeObject<AddressableRemoteConfig>(cachedJson);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        _remoteConfig = null;
+                        Debug.LogError($"Unable to read cached config data {ex.Message}\n{ex.StackTrace}");
                     }
                 }
             }
