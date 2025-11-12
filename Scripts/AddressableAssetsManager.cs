@@ -101,6 +101,9 @@ namespace Insthync.AddressableAssetTools
             TType handlerResult = handler.Value.Result;
             s_loadedAssets[assetRef.RuntimeKey] = handlerResult;
             s_assetRefs[assetRef.RuntimeKey] = handler.Value;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            Debug.Log($"Loaded addressable asset (Async): {assetRef.RuntimeKey}");
+#endif
             return handlerResult;
         }
 
@@ -117,6 +120,9 @@ namespace Insthync.AddressableAssetTools
             TType handlerResult = handler.Value.Result;
             s_loadedAssets[assetRef.RuntimeKey] = handlerResult;
             s_assetRefs[assetRef.RuntimeKey] = handler.Value;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            Debug.Log($"Loaded addressable asset: {assetRef.RuntimeKey}");
+#endif
             return handlerResult;
         }
 
@@ -288,6 +294,9 @@ namespace Insthync.AddressableAssetTools
                 Addressables.Release(handler);
             s_assetRefs.Remove(runtimeKey);
             s_loadedAssets.Remove(runtimeKey);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            Debug.Log($"Released addressable asset: {runtimeKey}");
+#endif
         }
 
         public static void ReleaseAll()
