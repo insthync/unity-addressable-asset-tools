@@ -160,7 +160,9 @@ namespace Insthync.AddressableAssetTools
                         (obj is GameObject && dependencyPath.ToLower().EndsWith("fbx")) || (obj is GameObject && dependencyPath.ToLower().EndsWith("obj"));
                     if (!isRendererDependencies)
                         continue;
-
+                    
+                    var depGuid = AssetDatabase.GUIDFromAssetPath(dependencyPath);
+                    Debug.Log($"Found {dependencyPath} ({depGuid}) is ref by {assetPath}", asset);
                     _dependencyPaths.Add(dependencyPath);
                     _dependencySelection[dependencyPath] = true; // Default to selected
                 }

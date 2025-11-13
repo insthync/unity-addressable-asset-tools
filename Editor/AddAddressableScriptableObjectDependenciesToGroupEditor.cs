@@ -159,6 +159,8 @@ namespace Insthync.AddressableAssetTools
                     if (!isScriptableObjectDependencies)
                         continue;
 
+                    var depGuid = AssetDatabase.GUIDFromAssetPath(dependencyPath);
+                    Debug.Log($"Found {dependencyPath} ({depGuid}) is ref by {assetPath}", asset);
                     _dependencyPaths.Add(dependencyPath);
                     _dependencySelection[dependencyPath] = true; // Default to selected
                 }
