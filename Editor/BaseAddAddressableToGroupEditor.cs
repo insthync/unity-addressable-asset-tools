@@ -1,32 +1,26 @@
 using System.Collections.Generic;
 using UnityEditor;
-using UnityEngine;
-using UnityEditor.AddressableAssets.Settings;
 using UnityEditor.AddressableAssets;
+using UnityEditor.AddressableAssets.Settings;
+using UnityEngine;
 
 namespace Insthync.AddressableAssetTools
 {
-    public class AddAddressableRendererDependenciesToGroupEditor : EditorWindow
+    public abstract class BaseAddAddressableToGroupEditor : EditorWindow
     {
-        private AddressableAssetSettings _settings;
-        private AddressableAssetGroup _selectedGroup;
-        private AddressableAssetGroup _dirtySelectedGroup;
-        private List<Object> _selectedAssets = new List<Object>();
-        private List<string> _dependencyPaths = new List<string>();
-        private Dictionary<string, bool> _dependencySelection = new Dictionary<string, bool>();
-        private Vector2 _assetsScrollPosition;
-        private bool _excludeFromOtherGroups = true;
-        private Vector2 _dependenciesScrollPosition;
+        protected AddressableAssetSettings _settings;
+        protected AddressableAssetGroup _selectedGroup;
+        protected AddressableAssetGroup _dirtySelectedGroup;
+        protected List<Object> _selectedAssets = new List<Object>();
+        protected List<string> _dependencyPaths = new List<string>();
+        protected Dictionary<string, bool> _dependencySelection = new Dictionary<string, bool>();
+        protected Vector2 _assetsScrollPosition;
+        protected bool _excludeFromOtherGroups = true;
+        protected Vector2 _dependenciesScrollPosition;
 
-        [MenuItem("Tools/Addressables/Add Renderer Dependencies to Group By Assets")]
-        public static void ShowWindow()
+        protected virtual void OnGUI()
         {
-            GetWindow<AddAddressableRendererDependenciesToGroupEditor>("Add Renderer Dependencies to Group By Assets");
-        }
-
-        private void OnGUI()
-        {
-            GUILayout.Label("Add Renderer Dependencies to Group By Assets", EditorStyles.boldLabel);
+            GUILayout.Label("Add Dependencies to Group", EditorStyles.boldLabel);
 
             _settings = AddressableAssetSettingsDefaultObject.Settings;
             if (_settings == null)
@@ -130,7 +124,7 @@ namespace Insthync.AddressableAssetTools
             }
         }
 
-        private void FindDependencies()
+        protected void FindDependencies()
         {
             _dependencyPaths.Clear();
             _dependencySelection.Clear();
@@ -145,7 +139,7 @@ namespace Insthync.AddressableAssetTools
                 foreach (var dependencyPath in dependencies)
                 {
                     // Exclude the asset itself, source code files, and dependencies already in another group
-                    if (dependencyPath == assetPath || IsInAnyAddressableGroup(dependencyPath))
+                    if (dependencyPath == assetPath || IsSourceCodeFile(dependencyPath))
                         continue;
 
                     if (_dependencyPaths.Contains(dependencyPath))
@@ -154,13 +148,9 @@ namespace Insthync.AddressableAssetTools
                     if (_excludeFromOtherGroups && IsInAnyAddressableGroup(dependencyPath))
                         continue;
 
-                    Object obj = AssetDatabase.LoadAssetAtPath<Object>(dependencyPath);
-                    bool isRendererDependencies = obj is Mesh || obj is Material || obj is Sprite || obj is Texture || obj is Shader ||
-                        obj is AnimatorOverrideController || obj is AnimationClip ||
-                        (obj is GameObject && dependencyPath.ToLower().EndsWith("fbx")) || (obj is GameObject && dependencyPath.ToLower().EndsWith("obj"));
-                    if (!isRendererDependencies)
+                    if (!IsTargetAsset(dependencyPath))
                         continue;
-                    
+
                     var depGuid = AssetDatabase.GUIDFromAssetPath(dependencyPath);
                     Debug.Log($"Found {dependencyPath} ({depGuid}) is ref by {assetPath}", asset);
                     _dependencyPaths.Add(dependencyPath);
@@ -172,7 +162,14 @@ namespace Insthync.AddressableAssetTools
             _dependencyPaths.Sort();
         }
 
-        private bool IsInAnyAddressableGroup(string dependencyPath)
+        protected bool IsSourceCodeFile(string dependencyPath)
+        {
+            return dependencyPath.EndsWith(".cs") || dependencyPath.EndsWith(".js") || dependencyPath.EndsWith(".boo");
+        }
+
+        protected abstract bool IsTargetAsset(string dependencyPath);
+
+        protected bool IsInAnyAddressableGroup(string dependencyPath)
         {
             string guid = AssetDatabase.AssetPathToGUID(dependencyPath);
             AddressableAssetEntry entry = _settings.FindAssetEntry(guid);
@@ -181,7 +178,7 @@ namespace Insthync.AddressableAssetTools
             return entry != null;
         }
 
-        private void AddSelectedDependencies()
+        protected void AddSelectedDependencies()
         {
             if (_selectedGroup == null)
             {
@@ -205,7 +202,7 @@ namespace Insthync.AddressableAssetTools
             EditorUtility.DisplayDialog("Done", "Selected dependencies have been added to the group.", "OK");
         }
 
-        private void SetAllDependenciesSelection(bool isSelected)
+        protected void SetAllDependenciesSelection(bool isSelected)
         {
             foreach (var key in _dependencyPaths)
             {
