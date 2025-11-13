@@ -17,8 +17,8 @@ namespace Insthync.AddressableAssetTools
 
             bool isRendererDependencies = obj is Mesh || obj is Material || obj is Sprite || obj is Texture || obj is Shader ||
                 obj is AnimatorOverrideController || obj is AnimationClip ||
-                (obj is GameObject && dependencyPath.ToLower().EndsWith("fbx")) || (obj is GameObject && dependencyPath.ToLower().EndsWith("obj"));
-
+                (obj is GameObject && dependencyPath.ToLower().EndsWith("fbx")) ||
+                (obj is GameObject && dependencyPath.ToLower().EndsWith("obj"));
             return isRendererDependencies;
         }
     }
