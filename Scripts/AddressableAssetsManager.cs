@@ -281,7 +281,35 @@ namespace Insthync.AddressableAssetTools
             }
             return results.ToArray();
         }
-        
+
+        public static async UniTask InstantiateGameObjects(this AssetReference[] addressablePrefabs, GameObject[] prefabs, Transform transform)
+        {
+            if ((prefabs == null || prefabs.Length <= 0) && addressablePrefabs != null && addressablePrefabs.Length > 0)
+            {
+                prefabs = await addressablePrefabs.GetOrLoadAssetsAsync();
+            }
+            if (prefabs != null && prefabs.Length > 0)
+            {
+                foreach (GameObject prefab in prefabs)
+                {
+                    if (prefab == null) continue;
+                    Object.Instantiate(prefab, transform.position, transform.rotation, transform);
+                }
+            }
+        }
+
+        public static async UniTask InstantiateGameObject(this AssetReference addressablePrefab, GameObject prefab, Transform transform)
+        {
+            if (prefab == null && addressablePrefab.IsDataValid())
+            {
+                prefab = await addressablePrefab.GetOrLoadAssetAsync();
+            }
+            if (prefab != null)
+            {
+                Object.Instantiate(prefab, transform.position, transform.rotation, transform);
+            }
+        }
+
         public static void Release<TAssetRef>(this TAssetRef assetRef)
             where TAssetRef : AssetReference
         {
