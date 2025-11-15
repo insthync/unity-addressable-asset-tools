@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.ResourceManagement.ResourceLocations;
+using UnityEngine.UIElements;
 
 namespace Insthync.AddressableAssetTools
 {
@@ -286,7 +287,14 @@ namespace Insthync.AddressableAssetTools
         {
             if ((prefabs == null || prefabs.Length <= 0) && addressablePrefabs != null && addressablePrefabs.Length > 0)
             {
-                prefabs = await addressablePrefabs.GetOrLoadAssetsAsync();
+                List<UniTask> instantiateTasks = new List<UniTask>();
+                foreach (AssetReference addressablePrefab in addressablePrefabs)
+                {
+                    if (!addressablePrefab.IsDataValid())
+                        continue;
+                    instantiateTasks.Add(Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, transform.position, transform.rotation, transform, true).ToUniTask());
+                }
+                await UniTask.WhenAll(instantiateTasks);
             }
             if (prefabs != null && prefabs.Length > 0)
             {
@@ -298,16 +306,59 @@ namespace Insthync.AddressableAssetTools
             }
         }
 
-        public static async UniTask InstantiateGameObject(this AssetReference addressablePrefab, GameObject prefab, Transform transform)
+        public static async UniTask InstantiateGameObjects(this AssetReference[] addressablePrefabs, GameObject[] prefabs, Vector3 position, Quaternion rotation, Transform transform = null)
+        {
+            if ((prefabs == null || prefabs.Length <= 0) && addressablePrefabs != null && addressablePrefabs.Length > 0)
+            {
+                List<UniTask> instantiateTasks = new List<UniTask>();
+                foreach (AssetReference addressablePrefab in addressablePrefabs)
+                {
+                    if (!addressablePrefab.IsDataValid())
+                        continue;
+                    instantiateTasks.Add(Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, position, rotation, transform, true).ToUniTask());
+                }
+                await UniTask.WhenAll(instantiateTasks);
+            }
+            if (prefabs != null && prefabs.Length > 0)
+            {
+                foreach (GameObject prefab in prefabs)
+                {
+                    if (prefab == null) continue;
+                    if (transform == null)
+                        Object.Instantiate(prefab, position, rotation);
+                    else
+                        Object.Instantiate(prefab, position, rotation, transform);
+                }
+            }
+        }
+
+        public static async UniTask<GameObject> InstantiateGameObject(this AssetReference addressablePrefab, GameObject prefab, Transform transform)
         {
             if (prefab == null && addressablePrefab.IsDataValid())
             {
-                prefab = await addressablePrefab.GetOrLoadAssetAsync();
+                return await Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, transform.position, transform.rotation, transform, true).ToUniTask();
             }
             if (prefab != null)
             {
-                Object.Instantiate(prefab, transform.position, transform.rotation, transform);
+                return Object.Instantiate(prefab, transform.position, transform.rotation, transform);
             }
+            return null;
+        }
+
+        public static async UniTask<GameObject> InstantiateGameObject(this AssetReference addressablePrefab, GameObject prefab, Vector3 position, Quaternion rotation, Transform transform = null)
+        {
+            if (prefab == null && addressablePrefab.IsDataValid())
+            {
+                return await Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, position, rotation, transform, true).ToUniTask();
+            }
+            if (prefab != null)
+            {
+                if (transform == null)
+                    return Object.Instantiate(prefab, position, rotation);
+                else
+                    return Object.Instantiate(prefab, position, rotation, transform);
+            }
+            return null;
         }
 
         public static void Release<TAssetRef>(this TAssetRef assetRef)
