@@ -18,6 +18,9 @@ namespace Insthync.AddressableAssetTools
         protected bool _excludeFromOtherGroups = true;
         protected Vector2 _dependenciesScrollPosition;
 
+        protected virtual void OnGUI_AddDependenciesToGroupSection() { }
+        protected virtual void OnGUI_SelectedAssetsSection() { }
+
         protected virtual void OnGUI()
         {
             GUILayout.Label("Add Dependencies to Group", EditorStyles.boldLabel);
@@ -44,6 +47,7 @@ namespace Insthync.AddressableAssetTools
             }
             EditorGUILayout.Space();
 
+            OnGUI_AddDependenciesToGroupSection();
             GUILayout.Label("Selected Assets:", EditorStyles.boldLabel);
 
             // Scrollable list of selected assets
@@ -78,6 +82,7 @@ namespace Insthync.AddressableAssetTools
             EditorGUILayout.Space();
 
             _excludeFromOtherGroups = EditorGUILayout.Toggle("Exclude From Other Groups", _excludeFromOtherGroups);
+            OnGUI_SelectedAssetsSection();
 
             if (GUILayout.Button("Find Dependencies of Selected Assets"))
             {
