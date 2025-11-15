@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEditor;
 using UnityEditor.AddressableAssets;
 using UnityEditor.AddressableAssets.Settings;
@@ -119,6 +120,10 @@ namespace Insthync.AddressableAssetTools
                     SetAllDependenciesSelection(false);
                 }
                 EditorGUILayout.EndHorizontal();
+                if (GUILayout.Button("Select Dependencies In Project Tab"))
+                {
+                    SelectDependenciesInProjectTab();
+                }
 
                 EditorGUILayout.Space();
 
@@ -213,6 +218,23 @@ namespace Insthync.AddressableAssetTools
             {
                 _dependencySelection[key] = isSelected;
             }
+        }
+
+        protected void SelectDependenciesInProjectTab()
+        {
+            List<Object> selectingObjects = new List<Object>();
+            foreach (var kv in _dependencySelection)
+            {
+                if (kv.Value)
+                {
+                    Object obj = AssetDatabase.LoadAssetAtPath<Object>(kv.Key);
+                    if (obj != null)
+                    {
+                        selectingObjects.Add(obj);
+                    }
+                }
+            }
+            Selection.objects = selectingObjects.ToArray();
         }
     }
 }
