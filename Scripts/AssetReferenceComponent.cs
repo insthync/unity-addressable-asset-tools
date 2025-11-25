@@ -1,6 +1,5 @@
 using UnityEngine;
 using UnityEngine.AddressableAssets;
-using UnityEngine.ResourceManagement.AsyncOperations;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -19,21 +18,6 @@ namespace Insthync.AddressableAssetTools
     {
         public AssetReferenceComponent(string guid) : base(guid)
         {
-        }
-
-        public new AsyncOperationHandle<TComponent> InstantiateAsync(Vector3 position, Quaternion rotation, Transform parent = null)
-        {
-            return Addressables.ResourceManager.CreateChainOperation(Addressables.InstantiateAsync(RuntimeKey, position, rotation, parent, false), AssetReferenceUtils.CreateGetComponentCompletedOperation<TComponent>);
-        }
-
-        public new AsyncOperationHandle<TComponent> InstantiateAsync(Transform parent = null, bool instantiateInWorldSpace = false)
-        {
-            return Addressables.ResourceManager.CreateChainOperation(Addressables.InstantiateAsync(RuntimeKey, parent, instantiateInWorldSpace, false), AssetReferenceUtils.CreateGetComponentCompletedOperation<TComponent>);
-        }
-
-        public AsyncOperationHandle<TComponent> LoadAssetAsync()
-        {
-            return Addressables.ResourceManager.CreateChainOperation(base.LoadAssetAsync<GameObject>(), AssetReferenceUtils.CreateGetComponentCompletedOperation<TComponent>);
         }
 
         public override bool ValidateAsset(Object obj)
@@ -61,19 +45,6 @@ namespace Insthync.AddressableAssetTools
 #else
             return false;
 #endif
-        }
-
-        public static void ReleaseInstance(AsyncOperationHandle<TComponent> op)
-        {
-            // Release the instance
-            var component = op.Result as Component;
-            if (component != null)
-            {
-                Addressables.ReleaseInstance(component.gameObject);
-            }
-
-            // Release the handle
-            Addressables.Release(op);
         }
     }
 }

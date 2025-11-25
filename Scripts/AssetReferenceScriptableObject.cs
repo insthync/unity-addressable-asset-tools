@@ -21,12 +21,6 @@ namespace Insthync.AddressableAssetTools
             return Addressables.LoadAssetAsync<TScriptableObject>(this);
         }
 
-        public new AsyncOperationHandle<GameObject> InstantiateAsync(Vector3 position, Quaternion rotation, Transform parent = null)
-        {
-            Debug.LogError($"InstantiateAsync is not supported for {typeof(TScriptableObject)} references.");
-            return default;
-        }
-
         public override bool ValidateAsset(Object obj)
         {
             if (obj is TScriptableObject)
