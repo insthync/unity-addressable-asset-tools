@@ -4,15 +4,48 @@ using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.ResourceManagement.ResourceLocations;
+using UnityEngine.ResourceManagement.ResourceProviders;
+using UnityEngine.SceneManagement;
 
 namespace Insthync.AddressableAssetTools
 {
     public static class AddressableAssetsManager
     {
+        private static readonly HashSet<object> s_loadingAssets = new HashSet<object>();
         private static readonly Dictionary<object, Object> s_loadedAssets = new Dictionary<object, Object>();
-        private static readonly Dictionary<object, AsyncOperationHandle> s_assetRefs = new Dictionary<object, AsyncOperationHandle>();
+        private static readonly Dictionary<object, AssetReference> s_assetRefs = new Dictionary<object, AssetReference>();
+        private static List<AsyncOperationHandle<SceneInstance>> s_addressableSceneHandles = new List<AsyncOperationHandle<SceneInstance>>();
 
-        public static async UniTask<AsyncOperationHandle<TType>?> LoadObjectAsync<TType>(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static AsyncOperationHandle<SceneInstance> LoadAddressableScene(AssetReferenceScene addressableScene, LoadSceneMode loadSceneMode = LoadSceneMode.Single)
+        {
+            AsyncOperationHandle<SceneInstance> addressableAsyncOp = addressableScene.LoadSceneAsync(loadSceneMode, true);
+            s_addressableSceneHandles.Add(addressableAsyncOp);
+            return addressableAsyncOp;
+        }
+
+        public static void AddAddressableSceneHandle(AsyncOperationHandle<SceneInstance> addressableSceneHandle)
+        {
+            s_addressableSceneHandles.Add(addressableSceneHandle);
+        }
+
+        public static async UniTask UnloadAddressableScenes()
+        {
+            if (s_addressableSceneHandles.Count == 0)
+                return;
+            for (int i = 0; i < s_addressableSceneHandles.Count; ++i)
+            {
+                if (!s_addressableSceneHandles[i].IsValid())
+                    continue;
+                AsyncOperationHandle<SceneInstance> addressableAsyncOp = Addressables.UnloadSceneAsync(s_addressableSceneHandles[i], UnloadSceneOptions.UnloadAllEmbeddedSceneObjects, true);
+                while (!addressableAsyncOp.IsDone)
+                {
+                    await UniTask.Yield();
+                }
+            }
+            s_addressableSceneHandles.Clear();
+        }
+
+        public static async UniTask<TType> LoadObjectAsync<TType>(this AssetReference assetRef)
             where TType : Object
         {
             // Check if the asset is actually marked as Addressable
@@ -23,6 +56,12 @@ namespace Insthync.AddressableAssetTools
 #endif
                 return null;
             }
+
+            while (s_loadingAssets.Contains(assetRef.RuntimeKey))
+            {
+                await UniTask.Yield();
+            }
+            s_loadingAssets.Add(assetRef.RuntimeKey);
 
             object runtimeKey = assetRef.RuntimeKey;
             // Check if the Addressable asset exists before loading
@@ -37,20 +76,27 @@ namespace Insthync.AddressableAssetTools
                 return null;
             }
 
-            AsyncOperationHandle<TType> handler = Addressables.LoadAssetAsync<TType>(runtimeKey);
-            handlerCallback?.Invoke(handler);
-            TType handlerResult;
             try
             {
-                handlerResult = await handler.ToUniTask();
+                TType result;
+                if (assetRef.Asset)
+                    result = assetRef.Asset as TType;
+                else
+                    result = await assetRef.LoadAssetAsync<TType>().ToUniTask();
+                s_loadingAssets.Remove(assetRef.RuntimeKey);
+                return result;
             }
-            catch
+            catch (System.Exception ex)
             {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                Debug.LogError($"Failed to load addressable asset asynchronously: {runtimeKey}, {ex.Message}\n{ex.StackTrace}");
+#endif
+                s_loadingAssets.Remove(assetRef.RuntimeKey);
+                return null;
             }
-            return handler;
         }
 
-        public static AsyncOperationHandle<TType>? LoadObject<TType>(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static TType LoadObject<TType>(this AssetReference assetRef)
             where TType : Object
         {
             // Check if the asset is actually marked as Addressable
@@ -75,214 +121,223 @@ namespace Insthync.AddressableAssetTools
                 return null;
             }
 
-            AsyncOperationHandle<TType> handler = Addressables.LoadAssetAsync<TType>(runtimeKey);
-            handlerCallback?.Invoke(handler);
-            TType handlerResult;
             try
             {
-                handlerResult = handler.WaitForCompletion();
+                TType result;
+                if (assetRef.Asset)
+                    result = assetRef.Asset as TType;
+                else
+                    result = assetRef.LoadAssetAsync<TType>().WaitForCompletion();
+                return result;
             }
-            catch
+            catch (System.Exception ex)
             {
-            }
-            return handler;
-        }
-
-        public static async UniTask<TType> GetOrLoadObjectAsync<TType>(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
-            where TType : Object
-        {
-            if (s_loadedAssets.TryGetValue(assetRef.RuntimeKey, out Object result))
-                return result as TType;
-
-            AsyncOperationHandle<TType>? handler = await assetRef.LoadObjectAsync<TType>(handlerCallback);
-            if (!handler.HasValue)
-                return null;
-
-            TType handlerResult = handler.Value.Result;
-            s_loadedAssets[assetRef.RuntimeKey] = handlerResult;
-            s_assetRefs[assetRef.RuntimeKey] = handler.Value;
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Debug.Log($"Loaded addressable asset (Async): {assetRef.RuntimeKey}");
+                Debug.LogError($"Failed to load addressable asset: {runtimeKey}, {ex.Message}\n{ex.StackTrace}");
 #endif
-            return handlerResult;
+                return null;
+            }
         }
 
-        public static TType GetOrLoadObject<TType>(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static async UniTask<TType> GetOrLoadObjectAsync<TType>(this AssetReference assetRef)
             where TType : Object
         {
             if (s_loadedAssets.TryGetValue(assetRef.RuntimeKey, out Object result))
                 return result as TType;
 
-            AsyncOperationHandle<TType>? handler = assetRef.LoadObject<TType>(handlerCallback);
-            if (!handler.HasValue)
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            Debug.Log($"Loading addressable asset: {assetRef.RuntimeKey}");
+#endif
+            TType loadedAsset = await assetRef.LoadObjectAsync<TType>();
+            if (loadedAsset == null)
                 return null;
 
-            TType handlerResult = handler.Value.Result;
-            s_loadedAssets[assetRef.RuntimeKey] = handlerResult;
-            s_assetRefs[assetRef.RuntimeKey] = handler.Value;
+            s_loadedAssets[assetRef.RuntimeKey] = loadedAsset;
+            s_assetRefs[assetRef.RuntimeKey] = assetRef;
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             Debug.Log($"Loaded addressable asset: {assetRef.RuntimeKey}");
 #endif
-            return handlerResult;
+            return loadedAsset;
         }
 
-        public static async UniTask<TType> GetOrLoadAssetAsync<TType>(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static TType GetOrLoadObject<TType>(this AssetReference assetRef)
+            where TType : Object
+        {
+            if (s_loadedAssets.TryGetValue(assetRef.RuntimeKey, out Object result))
+                return result as TType;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            Debug.Log($"Loading addressable asset: {assetRef.RuntimeKey}");
+#endif
+            TType loadedAsset = assetRef.LoadObject<TType>();
+            if (loadedAsset == null)
+                return null;
+
+            s_loadedAssets[assetRef.RuntimeKey] = loadedAsset;
+            s_assetRefs[assetRef.RuntimeKey] = assetRef;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            Debug.Log($"Loaded addressable asset: {assetRef.RuntimeKey}");
+#endif
+            return loadedAsset;
+        }
+
+        public static async UniTask<TType> GetOrLoadAssetAsync<TType>(this AssetReference assetRef)
             where TType : Component
         {
-            GameObject loadedObject = await assetRef.GetOrLoadAssetAsync(handlerCallback);
+            GameObject loadedObject = await assetRef.GetOrLoadAssetAsync();
             if (loadedObject != null)
                 return loadedObject.GetComponent<TType>();
             return null;
         }
 
-        public static TType GetOrLoadAsset<TType>(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static TType GetOrLoadAsset<TType>(this AssetReference assetRef)
             where TType : Component
         {
-            GameObject loadedObject = assetRef.GetOrLoadAsset(handlerCallback);
+            GameObject loadedObject = assetRef.GetOrLoadAsset();
             if (loadedObject != null)
                 return loadedObject.GetComponent<TType>();
             return null;
         }
 
-        public static async UniTask<GameObject> GetOrLoadAssetAsync(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static async UniTask<GameObject> GetOrLoadAssetAsync(this AssetReference assetRef)
         {
-            return await assetRef.GetOrLoadObjectAsync<GameObject>(handlerCallback);
+            return await assetRef.GetOrLoadObjectAsync<GameObject>();
         }
 
-        public static GameObject GetOrLoadAsset(this AssetReference assetRef, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static GameObject GetOrLoadAsset(this AssetReference assetRef)
         {
-            return assetRef.GetOrLoadObject<GameObject>(handlerCallback);
+            return assetRef.GetOrLoadObject<GameObject>();
         }
 
-        public static async UniTask<TType> GetOrLoadAssetAsyncOrUsePrefab<TType>(this AssetReference assetRef, TType prefab, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static async UniTask<TType> GetOrLoadAssetAsyncOrUsePrefab<TType>(this AssetReference assetRef, TType prefab)
             where TType : Component
         {
             TType tempPrefab = null;
             if (assetRef.IsDataValid())
-                tempPrefab = await assetRef.GetOrLoadAssetAsync<TType>(handlerCallback);
+                tempPrefab = await assetRef.GetOrLoadAssetAsync<TType>();
             if (tempPrefab == null)
                 tempPrefab = prefab;
             return tempPrefab;
         }
 
-        public static TType GetOrLoadAssetOrUsePrefab<TType>(this AssetReference assetRef, TType prefab, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static TType GetOrLoadAssetOrUsePrefab<TType>(this AssetReference assetRef, TType prefab)
             where TType : Component
         {
             TType tempPrefab = null;
             if (assetRef.IsDataValid())
-                tempPrefab = assetRef.GetOrLoadAsset<TType>(handlerCallback);
+                tempPrefab = assetRef.GetOrLoadAsset<TType>();
             if (tempPrefab == null)
                 tempPrefab = prefab;
             return tempPrefab;
         }
 
-        public static async UniTask<TType> GetOrLoadObjectAsyncOrUseAsset<TType>(this AssetReference assetRef, TType asset, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static async UniTask<TType> GetOrLoadObjectAsyncOrUseAsset<TType>(this AssetReference assetRef, TType asset)
             where TType : Object
         {
             TType tempAsset = null;
             if (assetRef.IsDataValid())
-                tempAsset = await assetRef.GetOrLoadObjectAsync<TType>(handlerCallback);
+                tempAsset = await assetRef.GetOrLoadObjectAsync<TType>();
             if (tempAsset == null)
                 tempAsset = asset;
             return tempAsset;
         }
-        
-        public static TType GetOrLoadObjectOrUseAsset<TType>(this AssetReference assetRef, TType asset, System.Action<AsyncOperationHandle> handlerCallback = null)
+
+        public static TType GetOrLoadObjectOrUseAsset<TType>(this AssetReference assetRef, TType asset)
             where TType : Object
         {
             TType tempAsset = null;
             if (assetRef.IsDataValid())
-                tempAsset = assetRef.GetOrLoadObject<TType>(handlerCallback);
+                tempAsset = assetRef.GetOrLoadObject<TType>();
             if (tempAsset == null)
                 tempAsset = asset;
             return tempAsset;
         }
-        
-        public static async UniTask<GameObject> GetOrLoadAssetAsyncOrUsePrefab(this AssetReference assetRef, GameObject prefab, System.Action<AsyncOperationHandle> handlerCallback = null)
+
+        public static async UniTask<GameObject> GetOrLoadAssetAsyncOrUsePrefab(this AssetReference assetRef, GameObject prefab)
         {
             GameObject tempPrefab = null;
             if (assetRef.IsDataValid())
-                tempPrefab = await assetRef.GetOrLoadAssetAsync(handlerCallback);
-            if (tempPrefab == null)
-                tempPrefab = prefab;
-            return tempPrefab;
-        }
-        
-        public static GameObject GetOrLoadAssetOrUsePrefab(this AssetReference assetRef, GameObject prefab, System.Action<AsyncOperationHandle> handlerCallback = null)
-        {
-            GameObject tempPrefab = null;
-            if (assetRef.IsDataValid())
-                tempPrefab = assetRef.GetOrLoadAsset(handlerCallback);
+                tempPrefab = await assetRef.GetOrLoadAssetAsync();
             if (tempPrefab == null)
                 tempPrefab = prefab;
             return tempPrefab;
         }
 
-        public static async UniTask<TType[]> GetOrLoadObjectsAsync<TType>(this IEnumerable<AssetReference> assetRefs, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static GameObject GetOrLoadAssetOrUsePrefab(this AssetReference assetRef, GameObject prefab)
+        {
+            GameObject tempPrefab = null;
+            if (assetRef.IsDataValid())
+                tempPrefab = assetRef.GetOrLoadAsset();
+            if (tempPrefab == null)
+                tempPrefab = prefab;
+            return tempPrefab;
+        }
+
+        public static async UniTask<TType[]> GetOrLoadObjectsAsync<TType>(this IEnumerable<AssetReference> assetRefs)
             where TType : Object
         {
             List<UniTask<TType>> tasks = new List<UniTask<TType>>();
             foreach (AssetReference assetRef in assetRefs)
             {
-                tasks.Add(assetRef.GetOrLoadObjectAsync<TType>(handlerCallback));
+                tasks.Add(assetRef.GetOrLoadObjectAsync<TType>());
             }
             return await UniTask.WhenAll(tasks);
         }
 
-        public static TType[] GetOrLoadObjects<TType>(this IEnumerable<AssetReference> assetRefs, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static TType[] GetOrLoadObjects<TType>(this IEnumerable<AssetReference> assetRefs)
             where TType : Object
         {
             List<TType> results = new List<TType>();
             foreach (AssetReference assetRef in assetRefs)
             {
-                results.Add(assetRef.GetOrLoadObject<TType>(handlerCallback));
+                results.Add(assetRef.GetOrLoadObject<TType>());
             }
             return results.ToArray();
         }
 
-        public static async UniTask<TType[]> GetOrLoadAssetsAsync<TType>(this IEnumerable<AssetReference> assetRefs, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static async UniTask<TType[]> GetOrLoadAssetsAsync<TType>(this IEnumerable<AssetReference> assetRefs)
             where TType : Component
         {
             List<UniTask<TType>> tasks = new List<UniTask<TType>>();
             foreach (AssetReference assetRef in assetRefs)
             {
-                tasks.Add(assetRef.GetOrLoadAssetAsync<TType>(handlerCallback));
+                tasks.Add(assetRef.GetOrLoadAssetAsync<TType>());
             }
             return await UniTask.WhenAll(tasks);
         }
 
-        public static TType[] GetOrLoadAssets<TType>(this IEnumerable<AssetReference> assetRefs, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static TType[] GetOrLoadAssets<TType>(this IEnumerable<AssetReference> assetRefs)
             where TType : Component
         {
             List<TType> results = new List<TType>();
             foreach (AssetReference assetRef in assetRefs)
             {
-                results.Add(assetRef.GetOrLoadAsset<TType>(handlerCallback));
+                results.Add(assetRef.GetOrLoadAsset<TType>());
             }
             return results.ToArray();
         }
-        
-        public static async UniTask<GameObject[]> GetOrLoadAssetsAsync(this IEnumerable<AssetReference> assetRefs, System.Action<AsyncOperationHandle> handlerCallback = null)
+
+        public static async UniTask<GameObject[]> GetOrLoadAssetsAsync(this IEnumerable<AssetReference> assetRefs)
         {
             List<UniTask<GameObject>> tasks = new List<UniTask<GameObject>>();
             foreach (AssetReference assetRef in assetRefs)
             {
-                tasks.Add(assetRef.GetOrLoadAssetAsync(handlerCallback));
+                tasks.Add(assetRef.GetOrLoadAssetAsync());
             }
             return await UniTask.WhenAll(tasks);
         }
 
-        public static GameObject[] GetOrLoadAssets(this IEnumerable<AssetReference> assetRefs, System.Action<AsyncOperationHandle> handlerCallback = null)
+        public static GameObject[] GetOrLoadAssets(this IEnumerable<AssetReference> assetRefs)
         {
             List<GameObject> results = new List<GameObject>();
             foreach (AssetReference assetRef in assetRefs)
             {
-                results.Add(assetRef.GetOrLoadAsset(handlerCallback));
+                results.Add(assetRef.GetOrLoadAsset());
             }
             return results.ToArray();
         }
 
-        public static async UniTask InstantiateGameObjects(this AssetReference[] addressablePrefabs, GameObject[] prefabs, Transform transform)
+        public static async UniTask InstantiateObjectsOrUsePrefabs(this AssetReference[] addressablePrefabs, GameObject[] prefabs, Transform transform)
         {
             if ((prefabs == null || prefabs.Length <= 0) && addressablePrefabs != null && addressablePrefabs.Length > 0)
             {
@@ -305,7 +360,7 @@ namespace Insthync.AddressableAssetTools
             }
         }
 
-        public static async UniTask InstantiateGameObjects(this AssetReference[] addressablePrefabs, GameObject[] prefabs, Vector3 position, Quaternion rotation, Transform transform = null)
+        public static async UniTask InstantiateObjectsOrUsePrefabs(this AssetReference[] addressablePrefabs, GameObject[] prefabs, Vector3 position, Quaternion rotation, Transform transform = null)
         {
             if ((prefabs == null || prefabs.Length <= 0) && addressablePrefabs != null && addressablePrefabs.Length > 0)
             {
@@ -331,7 +386,7 @@ namespace Insthync.AddressableAssetTools
             }
         }
 
-        public static async UniTask<GameObject> InstantiateGameObject(this AssetReference addressablePrefab, GameObject prefab, Transform transform)
+        public static async UniTask<GameObject> InstantiateObjectOrUsePrefab(this AssetReference addressablePrefab, GameObject prefab, Transform transform)
         {
             if (prefab == null && addressablePrefab.IsDataValid())
             {
@@ -344,7 +399,16 @@ namespace Insthync.AddressableAssetTools
             return null;
         }
 
-        public static async UniTask<GameObject> InstantiateGameObject(this AssetReference addressablePrefab, GameObject prefab, Vector3 position, Quaternion rotation, Transform transform = null)
+        public static async UniTask<T> InstantiateObjectOrUsePrefab<T>(this AssetReference addressablePrefab, GameObject prefab, Transform transform)
+            where T : Component
+        {
+            GameObject instantiatedObject = await addressablePrefab.InstantiateObjectOrUsePrefab(prefab, transform);
+            if (instantiatedObject != null)
+                return instantiatedObject.GetComponent<T>();
+            return null;
+        }
+
+        public static async UniTask<GameObject> InstantiateObjectOrUsePrefab(this AssetReference addressablePrefab, GameObject prefab, Vector3 position, Quaternion rotation, Transform transform = null)
         {
             if (prefab == null && addressablePrefab.IsDataValid())
             {
@@ -360,6 +424,51 @@ namespace Insthync.AddressableAssetTools
             return null;
         }
 
+        public static async UniTask<T> InstantiateObjectOrUsePrefab<T>(this AssetReference addressablePrefab, GameObject prefab, Vector3 position, Quaternion rotation, Transform transform = null)
+            where T : Component
+        {
+            GameObject instantiatedObject = await addressablePrefab.InstantiateObjectOrUsePrefab(prefab, position, rotation, transform);
+            if (instantiatedObject != null)
+                return instantiatedObject.GetComponent<T>();
+            return null;
+        }
+
+        public static async UniTask<GameObject> InstantiateObject(this AssetReference addressablePrefab, Transform transform)
+        {
+            if (addressablePrefab.IsDataValid())
+            {
+                return await Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, transform.position, transform.rotation, transform, true).ToUniTask();
+            }
+            return null;
+        }
+
+        public static async UniTask<T> InstantiateObject<T>(this AssetReference addressablePrefab, Transform transform)
+            where T : Component
+        {
+            GameObject instantiatedObject = await addressablePrefab.InstantiateObject(transform);
+            if (instantiatedObject != null)
+                return instantiatedObject.GetComponent<T>();
+            return null;
+        }
+
+        public static async UniTask<GameObject> InstantiateObject(this AssetReference addressablePrefab, Vector3 position, Quaternion rotation, Transform transform = null)
+        {
+            if (addressablePrefab.IsDataValid())
+            {
+                return await Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, position, rotation, transform, true).ToUniTask();
+            }
+            return null;
+        }
+
+        public static async UniTask<T> InstantiateObject<T>(this AssetReference addressablePrefab, Vector3 position, Quaternion rotation, Transform transform = null)
+            where T : Component
+        {
+            GameObject instantiatedObject = await addressablePrefab.InstantiateObject(position, rotation, transform);
+            if (instantiatedObject != null)
+                return instantiatedObject.GetComponent<T>();
+            return null;
+        }
+
         public static void Release<TAssetRef>(this TAssetRef assetRef)
             where TAssetRef : AssetReference
         {
@@ -368,8 +477,9 @@ namespace Insthync.AddressableAssetTools
 
         public static void Release(object runtimeKey)
         {
-            if (s_assetRefs.TryGetValue(runtimeKey, out AsyncOperationHandle handler))
-                Addressables.Release(handler);
+            if (!s_assetRefs.TryGetValue(runtimeKey, out AssetReference reference))
+                return;
+            reference.ReleaseAsset();
             s_assetRefs.Remove(runtimeKey);
             s_loadedAssets.Remove(runtimeKey);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
