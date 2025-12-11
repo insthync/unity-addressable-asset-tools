@@ -10,5 +10,9 @@ namespace Insthync.AddressableAssetTools
         [SerializeField]
         protected List<AssetReference> initialObjects = new List<AssetReference>();
         public virtual List<AssetReference> InitialObjects => initialObjects;
+
+        [SerializeField]
+        protected List<AssetReferenceShaderVariantCollection> shaderVariantCollections = new List<AssetReferenceShaderVariantCollection>();
+        public virtual List<AssetReferenceShaderVariantCollection> ShaderVariantCollections => shaderVariantCollections;
     }
 }

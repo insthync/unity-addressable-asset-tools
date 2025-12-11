@@ -254,6 +254,37 @@ namespace Insthync.AddressableAssetTools
                 }
             }
 
+            // Warmup shader variant collections
+            for (int i = 0; i < settings.ShaderVariantCollections.Count; ++i)
+            {
+                AssetReferenceShaderVariantCollection svcRef = settings.ShaderVariantCollections[i];
+                if (svcRef == null)
+                {
+                    Debug.LogWarning($"Null shader variant collection {i}, skipping...");
+                    continue;
+                }
+                object runtimeKey = svcRef.RuntimeKey;
+                Debug.Log($"Warming up shader variant collection {runtimeKey}");
+                AsyncOperationHandle<ShaderVariantCollection> loadSvcOp = svcRef.LoadAssetAsync<ShaderVariantCollection>();
+                try
+                {
+                    ShaderVariantCollection svc = await loadSvcOp.Task;
+                    if (loadSvcOp.Status != AsyncOperationStatus.Succeeded)
+                    {
+                        Debug.LogError($"Unable to load shader variant collection {runtimeKey} {loadSvcOp.OperationException.Message}\n{loadSvcOp.OperationException.StackTrace}");
+                        Addressables.Release(svcRef);
+                        continue;
+                    }
+                    svc.WarmUp();
+                    Debug.Log($"Warmed up shader variant collection {svc.name}");
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogError($"Unable to load shader variant collection {runtimeKey} {ex.Message}\n{ex.StackTrace}");
+                    Addressables.Release(svcRef);
+                }
+            }
+
             onEnd?.Invoke();
         }
 
