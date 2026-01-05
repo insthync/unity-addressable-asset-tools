@@ -13,7 +13,8 @@ namespace Insthync.AddressableAssetTools
     {
         private static readonly HashSet<object> s_loadingAssets = new HashSet<object>();
         private static readonly Dictionary<object, AsyncOperationHandle> s_loadedAssets = new Dictionary<object, AsyncOperationHandle>();
-        private static List<AsyncOperationHandle<SceneInstance>> s_addressableSceneHandles = new List<AsyncOperationHandle<SceneInstance>>();
+        private static readonly List<AsyncOperationHandle<SceneInstance>> s_addressableSceneHandles = new List<AsyncOperationHandle<SceneInstance>>();
+        private static readonly Dictionary<object, IList<IResourceLocation>> s_resourceLocations = new Dictionary<object, IList<IResourceLocation>>();
 
         public static AsyncOperationHandle<SceneInstance> LoadAddressableScene(AssetReferenceScene addressableScene, LoadSceneMode loadSceneMode = LoadSceneMode.Single)
         {
@@ -459,6 +460,64 @@ namespace Insthync.AddressableAssetTools
             {
                 Release(keys[i]);
             }
+        }
+
+        public static UniTask<IList<IResourceLocation>> GetResourceLocationAsync(this AssetReference asset)
+        {
+            return GetResourceLocationByRuntimeKeyAsync(asset.RuntimeKey);
+        }
+
+        public static async UniTask<IList<IResourceLocation>> GetResourceLocationByRuntimeKeyAsync(object runtimeKey)
+        {
+            if (s_resourceLocations.TryGetValue(runtimeKey, out IList<IResourceLocation> cachedLocations))
+                return cachedLocations;
+            var handler = Addressables.LoadResourceLocationsAsync(runtimeKey);
+            var result = await handler.ToUniTask();
+            handler.Release();
+            s_resourceLocations[runtimeKey] = cachedLocations;
+            return result;
+        }
+
+        public static UniTask<IResourceLocation> GetFirstResourceLocationAsync(this AssetReference asset)
+        {
+            return GetFirstResourceLocationByRuntimeKeyAsync(asset.RuntimeKey);
+        }
+
+        public static async UniTask<IResourceLocation> GetFirstResourceLocationByRuntimeKeyAsync(object runtimeKey)
+        {
+            var list = await GetResourceLocationByRuntimeKeyAsync(runtimeKey);
+            if (list != null && list.Count > 0)
+                return list[0];
+            return null;
+        }
+
+        public static IList<IResourceLocation> GetResourceLocation(this AssetReference asset)
+        {
+            return GetResourceLocationByRuntimeKey(asset.RuntimeKey);
+        }
+
+        public static IList<IResourceLocation> GetResourceLocationByRuntimeKey(object runtimeKey)
+        {
+            if (s_resourceLocations.TryGetValue(runtimeKey, out IList<IResourceLocation> cachedLocations))
+                return cachedLocations;
+            var handler = Addressables.LoadResourceLocationsAsync(runtimeKey);
+            var result = handler.WaitForCompletion();
+            handler.Release();
+            s_resourceLocations[runtimeKey] = cachedLocations;
+            return result;
+        }
+
+        public static IResourceLocation GetFirstResourceLocation(this AssetReference asset)
+        {
+            return GetFirstResourceLocationByRuntimeKey(asset.RuntimeKey);
+        }
+
+        public static IResourceLocation GetFirstResourceLocationByRuntimeKey(object runtimeKey)
+        {
+            var list = GetResourceLocationByRuntimeKey(runtimeKey);
+            if (list != null && list.Count > 0)
+                return list[0];
+            return null;
         }
     }
 }
