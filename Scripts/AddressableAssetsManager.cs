@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
+using UnityEngine.AddressableAssets.ResourceLocators;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.ResourceManagement.ResourceLocations;
 using UnityEngine.ResourceManagement.ResourceProviders;
@@ -16,6 +17,29 @@ namespace Insthync.AddressableAssetTools
         private static readonly Dictionary<object, AsyncOperationHandle> s_loadedAssets = new Dictionary<object, AsyncOperationHandle>();
         private static readonly List<AsyncOperationHandle<SceneInstance>> s_addressableSceneHandles = new List<AsyncOperationHandle<SceneInstance>>();
         private static readonly Dictionary<object, IList<IResourceLocation>> s_resourceLocations = new Dictionary<object, IList<IResourceLocation>>();
+
+        public static bool TryGetRuntimeKeyBySceneName(string sceneName, out object runtimeKey)
+        {
+            foreach (IResourceLocator locator in Addressables.ResourceLocators)
+            {
+                foreach (object key in locator.Keys)
+                {
+                    if (!locator.Locate(key, typeof(SceneInstance), out IList<IResourceLocation> list))
+                        continue;
+                    foreach (IResourceLocation location in list)
+                    {
+                        string path = Path.GetFileNameWithoutExtension(location.InternalId);
+                        if (string.Equals(path, sceneName, System.StringComparison.OrdinalIgnoreCase))
+                        {
+                            runtimeKey = key;
+                            return true;
+                        }
+                    }
+                }
+            }
+            runtimeKey = null;
+            return false;
+        }
 
         public static AsyncOperationHandle<SceneInstance> LoadAddressableScene(AssetReferenceScene addressableScene, LoadSceneMode loadSceneMode = LoadSceneMode.Single)
         {
@@ -46,59 +70,22 @@ namespace Insthync.AddressableAssetTools
             s_addressableSceneHandles.Clear();
         }
 
-        public static string GetScenePath(this AssetReferenceScene scene)
+        public static string GetScenePathByRuntimeKey(object runtimeKey)
         {
-            IResourceLocation resourceLocation = scene.GetFirstResourceLocation();
+            IResourceLocation resourceLocation = GetFirstResourceLocationByRuntimeKey(runtimeKey);
             if (resourceLocation == null)
                 return string.Empty;
             return resourceLocation.InternalId;
+        }
+
+        public static string GetScenePath(this AssetReferenceScene scene)
+        {
+            return GetScenePathByRuntimeKey(scene.RuntimeKey);
         }
 
         public static string GetSceneName(this AssetReferenceScene scene)
         {
             return Path.GetFileNameWithoutExtension(scene.GetScenePath());
-        }
-
-        public static async UniTask<string> GetScenePathAsync(this AssetReferenceScene scene)
-        {
-            IResourceLocation resourceLocation = await scene.GetFirstResourceLocationAsync();
-            if (resourceLocation == null)
-                return string.Empty;
-            return resourceLocation.InternalId;
-        }
-
-        public static async UniTask<string> GetSceneNameAsync(this AssetReferenceScene scene)
-        {
-            return Path.GetFileNameWithoutExtension(await scene.GetScenePathAsync());
-        }
-
-        public static UniTask<IList<IResourceLocation>> GetResourceLocationAsync(this AssetReference asset)
-        {
-            return GetResourceLocationByRuntimeKeyAsync(asset.RuntimeKey);
-        }
-
-        public static async UniTask<IList<IResourceLocation>> GetResourceLocationByRuntimeKeyAsync(object runtimeKey)
-        {
-            if (s_resourceLocations.TryGetValue(runtimeKey, out IList<IResourceLocation> cachedLocations))
-                return cachedLocations;
-            var handler = Addressables.LoadResourceLocationsAsync(runtimeKey);
-            var result = await handler.ToUniTask();
-            handler.Release();
-            s_resourceLocations[runtimeKey] = cachedLocations;
-            return result;
-        }
-
-        public static UniTask<IResourceLocation> GetFirstResourceLocationAsync(this AssetReference asset)
-        {
-            return GetFirstResourceLocationByRuntimeKeyAsync(asset.RuntimeKey);
-        }
-
-        public static async UniTask<IResourceLocation> GetFirstResourceLocationByRuntimeKeyAsync(object runtimeKey)
-        {
-            var list = await GetResourceLocationByRuntimeKeyAsync(runtimeKey);
-            if (list != null && list.Count > 0)
-                return list[0];
-            return null;
         }
 
         public static IList<IResourceLocation> GetResourceLocation(this AssetReference asset)
@@ -110,11 +97,14 @@ namespace Insthync.AddressableAssetTools
         {
             if (s_resourceLocations.TryGetValue(runtimeKey, out IList<IResourceLocation> cachedLocations))
                 return cachedLocations;
-            var handler = Addressables.LoadResourceLocationsAsync(runtimeKey);
-            var result = handler.WaitForCompletion();
-            handler.Release();
-            s_resourceLocations[runtimeKey] = cachedLocations;
-            return result;
+            foreach (IResourceLocator locator in Addressables.ResourceLocators)
+            {
+                if (!locator.Locate(runtimeKey, typeof(SceneInstance), out IList<IResourceLocation> list))
+                    continue;
+                s_resourceLocations[runtimeKey] = list;
+                return list;
+            }
+            return null;
         }
 
         public static IResourceLocation GetFirstResourceLocation(this AssetReference asset)
