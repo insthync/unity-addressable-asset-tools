@@ -1,5 +1,6 @@
 using Cysharp.Threading.Tasks;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
@@ -43,6 +44,90 @@ namespace Insthync.AddressableAssetTools
                 }
             }
             s_addressableSceneHandles.Clear();
+        }
+
+        public static string GetScenePath(this AssetReferenceScene scene)
+        {
+            IResourceLocation resourceLocation = scene.GetFirstResourceLocation();
+            if (resourceLocation == null)
+                return string.Empty;
+            return resourceLocation.InternalId;
+        }
+
+        public static string GetSceneName(this AssetReferenceScene scene)
+        {
+            return Path.GetFileNameWithoutExtension(scene.GetScenePath());
+        }
+
+        public static async UniTask<string> GetScenePathAsync(this AssetReferenceScene scene)
+        {
+            IResourceLocation resourceLocation = await scene.GetFirstResourceLocationAsync();
+            if (resourceLocation == null)
+                return string.Empty;
+            return resourceLocation.InternalId;
+        }
+
+        public static async UniTask<string> GetSceneNameAsync(this AssetReferenceScene scene)
+        {
+            return Path.GetFileNameWithoutExtension(await scene.GetScenePathAsync());
+        }
+
+        public static UniTask<IList<IResourceLocation>> GetResourceLocationAsync(this AssetReference asset)
+        {
+            return GetResourceLocationByRuntimeKeyAsync(asset.RuntimeKey);
+        }
+
+        public static async UniTask<IList<IResourceLocation>> GetResourceLocationByRuntimeKeyAsync(object runtimeKey)
+        {
+            if (s_resourceLocations.TryGetValue(runtimeKey, out IList<IResourceLocation> cachedLocations))
+                return cachedLocations;
+            var handler = Addressables.LoadResourceLocationsAsync(runtimeKey);
+            var result = await handler.ToUniTask();
+            handler.Release();
+            s_resourceLocations[runtimeKey] = cachedLocations;
+            return result;
+        }
+
+        public static UniTask<IResourceLocation> GetFirstResourceLocationAsync(this AssetReference asset)
+        {
+            return GetFirstResourceLocationByRuntimeKeyAsync(asset.RuntimeKey);
+        }
+
+        public static async UniTask<IResourceLocation> GetFirstResourceLocationByRuntimeKeyAsync(object runtimeKey)
+        {
+            var list = await GetResourceLocationByRuntimeKeyAsync(runtimeKey);
+            if (list != null && list.Count > 0)
+                return list[0];
+            return null;
+        }
+
+        public static IList<IResourceLocation> GetResourceLocation(this AssetReference asset)
+        {
+            return GetResourceLocationByRuntimeKey(asset.RuntimeKey);
+        }
+
+        public static IList<IResourceLocation> GetResourceLocationByRuntimeKey(object runtimeKey)
+        {
+            if (s_resourceLocations.TryGetValue(runtimeKey, out IList<IResourceLocation> cachedLocations))
+                return cachedLocations;
+            var handler = Addressables.LoadResourceLocationsAsync(runtimeKey);
+            var result = handler.WaitForCompletion();
+            handler.Release();
+            s_resourceLocations[runtimeKey] = cachedLocations;
+            return result;
+        }
+
+        public static IResourceLocation GetFirstResourceLocation(this AssetReference asset)
+        {
+            return GetFirstResourceLocationByRuntimeKey(asset.RuntimeKey);
+        }
+
+        public static IResourceLocation GetFirstResourceLocationByRuntimeKey(object runtimeKey)
+        {
+            var list = GetResourceLocationByRuntimeKey(runtimeKey);
+            if (list != null && list.Count > 0)
+                return list[0];
+            return null;
         }
 
         public static async UniTask<TType> GetOrLoadObjectAsync<TType>(this AssetReference assetRef)
@@ -460,64 +545,6 @@ namespace Insthync.AddressableAssetTools
             {
                 Release(keys[i]);
             }
-        }
-
-        public static UniTask<IList<IResourceLocation>> GetResourceLocationAsync(this AssetReference asset)
-        {
-            return GetResourceLocationByRuntimeKeyAsync(asset.RuntimeKey);
-        }
-
-        public static async UniTask<IList<IResourceLocation>> GetResourceLocationByRuntimeKeyAsync(object runtimeKey)
-        {
-            if (s_resourceLocations.TryGetValue(runtimeKey, out IList<IResourceLocation> cachedLocations))
-                return cachedLocations;
-            var handler = Addressables.LoadResourceLocationsAsync(runtimeKey);
-            var result = await handler.ToUniTask();
-            handler.Release();
-            s_resourceLocations[runtimeKey] = cachedLocations;
-            return result;
-        }
-
-        public static UniTask<IResourceLocation> GetFirstResourceLocationAsync(this AssetReference asset)
-        {
-            return GetFirstResourceLocationByRuntimeKeyAsync(asset.RuntimeKey);
-        }
-
-        public static async UniTask<IResourceLocation> GetFirstResourceLocationByRuntimeKeyAsync(object runtimeKey)
-        {
-            var list = await GetResourceLocationByRuntimeKeyAsync(runtimeKey);
-            if (list != null && list.Count > 0)
-                return list[0];
-            return null;
-        }
-
-        public static IList<IResourceLocation> GetResourceLocation(this AssetReference asset)
-        {
-            return GetResourceLocationByRuntimeKey(asset.RuntimeKey);
-        }
-
-        public static IList<IResourceLocation> GetResourceLocationByRuntimeKey(object runtimeKey)
-        {
-            if (s_resourceLocations.TryGetValue(runtimeKey, out IList<IResourceLocation> cachedLocations))
-                return cachedLocations;
-            var handler = Addressables.LoadResourceLocationsAsync(runtimeKey);
-            var result = handler.WaitForCompletion();
-            handler.Release();
-            s_resourceLocations[runtimeKey] = cachedLocations;
-            return result;
-        }
-
-        public static IResourceLocation GetFirstResourceLocation(this AssetReference asset)
-        {
-            return GetFirstResourceLocationByRuntimeKey(asset.RuntimeKey);
-        }
-
-        public static IResourceLocation GetFirstResourceLocationByRuntimeKey(object runtimeKey)
-        {
-            var list = GetResourceLocationByRuntimeKey(runtimeKey);
-            if (list != null && list.Count > 0)
-                return list[0];
-            return null;
         }
     }
 }
