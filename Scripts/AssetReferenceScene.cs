@@ -1,6 +1,8 @@
+using Cysharp.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
-
+using UnityEngine.ResourceManagement.ResourceLocations;
+using System.IO;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -10,18 +12,41 @@ namespace Insthync.AddressableAssetTools
     [System.Serializable]
     public class AssetReferenceScene : AssetReference
     {
-        [SerializeField]
-        private string sceneName = string.Empty;
-
         public string SceneName
         {
-            get { return sceneName; }
+            get { return GetSceneName(); }
+        }
+
+        public string GetScenePath()
+        {
+            IResourceLocation resourceLocation = this.GetFirstResourceLocation();
+            if (resourceLocation == null)
+                return string.Empty;
+            return resourceLocation.InternalId;
+        }
+
+        public string GetSceneName()
+        {
+            return Path.GetFileNameWithoutExtension(GetScenePath());
+        }
+
+        public async UniTask<string> GetScenePathAsync()
+        {
+            IResourceLocation resourceLocation = await this.GetFirstResourceLocationAsync();
+            if (resourceLocation == null)
+                return string.Empty;
+            return resourceLocation.InternalId;
+        }
+
+        public async UniTask<string> GetSceneNameAsync()
+        {
+            return Path.GetFileNameWithoutExtension(await GetScenePathAsync());
         }
 
 #if UNITY_EDITOR
         public AssetReferenceScene(SceneAsset scene) : base(AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(scene)))
         {
-            sceneName = scene.name;
+
         }
 
         public override bool ValidateAsset(string path)
@@ -40,15 +65,12 @@ namespace Insthync.AddressableAssetTools
             {
                 return false;
             }
-
             if (value is SceneAsset scene)
             {
-                sceneName = scene.name;
                 return true;
             }
             else
             {
-                sceneName = string.Empty;
                 return false;
             }
         }
