@@ -1,3 +1,4 @@
+#if !DISABLE_ADDRESSABLES
 namespace Insthync.AddressableAssetTools
 {
     [System.Serializable]
@@ -8,3 +9,4 @@ namespace Insthync.AddressableAssetTools
         }
     }
 }
+#endif

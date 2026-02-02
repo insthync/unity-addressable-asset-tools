@@ -1,3 +1,4 @@
+#if !DISABLE_ADDRESSABLES
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 #if UNITY_EDITOR
@@ -48,3 +49,4 @@ namespace Insthync.AddressableAssetTools
 #endif
     }
 }
+#endif

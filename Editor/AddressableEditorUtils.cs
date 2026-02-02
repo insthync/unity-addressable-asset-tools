@@ -1,4 +1,4 @@
-#if UNITY_EDITOR
+#if UNITY_EDITOR && !DISABLE_ADDRESSABLES
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;

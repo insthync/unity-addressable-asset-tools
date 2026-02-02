@@ -1,3 +1,4 @@
+#if !DISABLE_ADDRESSABLES
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
@@ -37,3 +38,4 @@ namespace Insthync.AddressableAssetTools
         }
     }
 }
+#endif

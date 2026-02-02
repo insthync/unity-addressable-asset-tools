@@ -1,3 +1,4 @@
+#if !DISABLE_ADDRESSABLES
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
@@ -16,3 +17,4 @@ namespace Insthync.AddressableAssetTools
         public virtual List<AssetReferenceShaderVariantCollection> ShaderVariantCollections => shaderVariantCollections;
     }
 }
+#endif

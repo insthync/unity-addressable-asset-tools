@@ -1,3 +1,4 @@
+#if !DISABLE_ADDRESSABLES
 using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
@@ -238,3 +239,4 @@ namespace Insthync.AddressableAssetTools
         }
     }
 }
+#endif

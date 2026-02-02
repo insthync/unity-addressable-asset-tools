@@ -1,17 +1,18 @@
+#if !DISABLE_ADDRESSABLES
 using Cysharp.Threading.Tasks;
 using Newtonsoft.Json;
 using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
-using UnityEngine.AddressableAssets;
 using UnityEngine.Events;
-using UnityEngine.ResourceManagement.AsyncOperations;
+using UnityEngine.AddressableAssets;
+using UnityEngine.AddressableAssets.Initialization;
 using UnityEngine.AddressableAssets.ResourceLocators;
+using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.ResourceManagement.ResourceProviders;
 using UnityEngine.SceneManagement;
 using UnityEngine.Networking;
-using UnityEngine.AddressableAssets.Initialization;
 using System.IO;
 
 namespace Insthync.AddressableAssetTools
@@ -504,3 +505,4 @@ namespace Insthync.AddressableAssetTools
         }
     }
 }
+#endif
