@@ -396,14 +396,14 @@ namespace Insthync.AddressableAssetTools
                         continue;
                     instantiateTasks.Add(Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, transform.position, transform.rotation, transform, true).ToUniTask());
                 }
-                await UniTask.WhenAll(instantiateTasks);
+                GameObject[] results = await UniTask.WhenAll(instantiateTasks);
                 if (instantiatedObjects != null)
                 {
-                    foreach (UniTask<GameObject> task in instantiateTasks)
+                    foreach (GameObject result in results)
                     {
-                        if (task.Status != UniTaskStatus.Succeeded)
+                        if (result == null)
                             continue;
-                        instantiatedObjects.Add(task.GetAwaiter().GetResult());
+                        instantiatedObjects.Add(result);
                     }
                 }
                 return;
@@ -431,14 +431,14 @@ namespace Insthync.AddressableAssetTools
                         continue;
                     instantiateTasks.Add(Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, position, rotation, transform, true).ToUniTask());
                 }
-                await UniTask.WhenAll(instantiateTasks);
+                GameObject[] results = await UniTask.WhenAll(instantiateTasks);
                 if (instantiatedObjects != null)
                 {
-                    foreach (UniTask<GameObject> task in instantiateTasks)
+                    foreach (GameObject result in results)
                     {
-                        if (task.Status != UniTaskStatus.Succeeded)
+                        if (result == null)
                             continue;
-                        instantiatedObjects.Add(task.GetAwaiter().GetResult());
+                        instantiatedObjects.Add(result);
                     }
                 }
                 return;
