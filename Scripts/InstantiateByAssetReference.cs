@@ -13,28 +13,46 @@ namespace Insthync.AddressableAssetTools
         public float destroyDelay = 0f;
         public Transform parent;
 
-        void Start()
+        private void Start()
         {
             if (instantiateOnStart)
             {
                 if (parent == null)
                     parent = transform;
-                Instantiate(parent);
+                InstantiateAsync(parent).Forget();
             }
         }
 
         public virtual async UniTask<GameObject> InstantiateAsync(Vector3 position, Quaternion rotation, Transform parent = null)
         {
             if (!assetReference.IsDataValid())
+            {
                 Debug.LogWarning("AssetReference is not valid.");
-            return await Addressables.InstantiateAsync(assetReference.RuntimeKey, position, rotation, parent, true).ToUniTask();
+                return null;
+            }
+            GameObject instance = await AddressableAssetsManager.InstantiateAndOwn(
+                () => Addressables.InstantiateAsync(assetReference.RuntimeKey, position, rotation, parent, true), parent);
+            ScheduleDestroy(instance);
+            return instance;
         }
 
         public virtual async UniTask<GameObject> InstantiateAsync(Transform parent = null, bool instantiateInWorldSpace = false)
         {
             if (!assetReference.IsDataValid())
+            {
                 Debug.LogWarning("AssetReference is not valid.");
-            return await Addressables.InstantiateAsync(assetReference.RuntimeKey, parent, instantiateInWorldSpace, true).ToUniTask();
+                return null;
+            }
+            GameObject instance = await AddressableAssetsManager.InstantiateAndOwn(
+                () => Addressables.InstantiateAsync(assetReference.RuntimeKey, parent, instantiateInWorldSpace, true), parent);
+            ScheduleDestroy(instance);
+            return instance;
+        }
+
+        private void ScheduleDestroy(GameObject instance)
+        {
+            if (instance != null && destroyDelay > 0f)
+                Destroy(instance, destroyDelay);
         }
     }
 }

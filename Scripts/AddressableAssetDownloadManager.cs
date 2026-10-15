@@ -22,6 +22,13 @@ namespace Insthync.AddressableAssetTools
         public string remoteConfigUrl;
         public string cachedClientConfigFileName = "cachedAddressableConfig.json";
         public AssetReferenceDownloadManagerSettings settingsAssetReference;
+        [Tooltip("Resolve bundle keys directly in Unity binary catalogs. Disable for custom catalogs that do not expose every bundle using a .bundle key.")]
+        public bool useBundleKeysForBuiltInCatalogs = true;
+        [Min(1)]
+        public int downloadBatchSize = 16;
+        [Tooltip("Maximum shader variants to warm up per frame. Individual variants can still take longer than one frame.")]
+        [Min(1)]
+        public int shaderVariantsPerFrame = 32;
         [Header("Events")]
         public UnityEvent onStart = new UnityEvent();
         public UnityEvent onEnd = new UnityEvent();
@@ -50,6 +57,10 @@ namespace Insthync.AddressableAssetTools
             {
                 await StartAsync();
             }
+            catch (System.OperationCanceledException) when (this == null)
+            {
+                // Pending operations release their handles when the manager is destroyed.
+            }
             catch (System.Exception ex)
             {
                 Debug.LogException(ex);
@@ -59,7 +70,8 @@ namespace Insthync.AddressableAssetTools
 
         private async UniTask StartAsync()
         {
-            await UniTask.Yield();
+            var cancellationToken = this.GetCancellationTokenOnDestroy();
+            await UniTask.Yield(cancellationToken);
             onStart?.Invoke();
 
             if (!string.IsNullOrWhiteSpace(remoteConfigUrl))
@@ -144,6 +156,8 @@ namespace Insthync.AddressableAssetTools
                     Addressables.Release(initialResourceLocatorHandle);
             }
 
+            LogDownloadMemory("initialized");
+
             if (_remoteConfig != null && _remoteConfig.catalogUrls != null)
             {
                 Debug.Log($"Reading remote config and catalogs.");
@@ -204,22 +218,17 @@ namespace Insthync.AddressableAssetTools
                     Addressables.Release(updateHandle);
             }
             AddressableAssetsManager.ClearResourceLocationCache();
+            LogDownloadMemory("catalogs ready");
 
-            HashSet<object> keys = new HashSet<object>();
-            foreach (IResourceLocator resourceLocator in Addressables.ResourceLocators)
-            {
-                foreach (object key in resourceLocator.Keys)
-                {
-                    keys.Add(key);
-                }
-            }
-
-            // Downloads
+            // Resolve only bundle metadata, instead of expanding every asset alias.
             Debug.Log("Start assets downloading...");
             TotalCount = 1;
             try
             {
-                await DownloadMany(keys,
+                await DownloadAllBundles(
+                    Addressables.ResourceLocators,
+                    useBundleKeysForBuiltInCatalogs,
+                    Mathf.Max(1, downloadBatchSize),
                     OnFileSizeRetrieving,
                     OnFileSizeRetrieved,
                     OnDepsDownloading,
@@ -232,115 +241,16 @@ namespace Insthync.AddressableAssetTools
                 Debug.LogException(ex);
                 return;
             }
-            finally
-            {
-                keys.Clear();
-            }
             LoadedCount++;
 
             await UniTask.Yield();
             onDownloadedAll?.Invoke();
 
-            // Read settings to find which assets will be instantiated
-            Debug.Log("Read addressable asset download manager settings.");
-            AddressableAssetDownloadManagerSettings settings = null;
-            AsyncOperationHandle<AddressableAssetDownloadManagerSettings> loadSettingsHandle;
-            loadSettingsHandle = settingsAssetReference.LoadAssetAsync();
-            try
-            {
-                await loadSettingsHandle.Task;
-                settings = loadSettingsHandle.Result;
-                if (loadSettingsHandle.Status != AsyncOperationStatus.Succeeded)
-                {
-                    onUnableToLoadSettings.Invoke(loadSettingsHandle.Status, loadSettingsHandle.OperationException);
-                    Addressables.Release(loadSettingsHandle);
-                    return;
-                }
-            }
-            catch (System.Exception ex)
-            {
-                Debug.LogError($"Unable to load settings {ex.Message}\n{ex.StackTrace}");
-                onUnableToLoadSettings.Invoke(loadSettingsHandle.Status, ex);
-                Addressables.Release(loadSettingsHandle);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!await InitializeStartupAssets(cancellationToken))
                 return;
-            }
-            try
-            {
-                // Instantiates
-                for (int i = 0; i < settings.InitialObjects.Count; ++i)
-                {
-                    AssetReference assetRef = settings.InitialObjects[i];
-                    if (assetRef == null)
-                    {
-                        Debug.LogWarning($"Null initial object {i}, skipping...");
-                        continue;
-                    }
-                    object runtimeKey = assetRef.RuntimeKey;
-                    Debug.Log($"Initializing {runtimeKey}");
-                    AsyncOperationHandle<GameObject> instantiateOp = Addressables.InstantiateAsync(runtimeKey);
-                    try
-                    {
-                        await instantiateOp.Task;
-                        if (instantiateOp.Status != AsyncOperationStatus.Succeeded)
-                        {
-                            onUnableToInitialObject.Invoke(runtimeKey, instantiateOp.Status, instantiateOp.OperationException);
-                            if (instantiateOp.IsValid())
-                                Addressables.Release(instantiateOp);
-                            continue;
-                        }
-                        GameObject instance = instantiateOp.Result;
-                        if (instance.GetComponent<AssetReferenceReleaser>() == null)
-                            instance.AddComponent<AssetReferenceReleaser>();
-                        Debug.Log($"Initialized {instance.name}");
-                    }
-                    catch (System.Exception ex)
-                    {
-                        Debug.LogError($"Unable to initialize {runtimeKey} {ex.Message}\n{ex.StackTrace}");
-                        onUnableToInitialObject.Invoke(runtimeKey, instantiateOp.Status, ex);
-                        if (instantiateOp.IsValid())
-                            Addressables.Release(instantiateOp);
-                    }
-                }
-
-                // Warmup shader variant collections
-                for (int i = 0; i < settings.ShaderVariantCollections.Count; ++i)
-                {
-                    AssetReferenceShaderVariantCollection svcRef = settings.ShaderVariantCollections[i];
-                    if (svcRef == null)
-                    {
-                        Debug.LogWarning($"Null shader variant collection {i}, skipping...");
-                        continue;
-                    }
-                    object runtimeKey = svcRef.RuntimeKey;
-                    Debug.Log($"Warming up shader variant collection {runtimeKey}");
-                    AsyncOperationHandle<ShaderVariantCollection> loadSvcOp = svcRef.LoadAssetAsync<ShaderVariantCollection>();
-                    try
-                    {
-                        ShaderVariantCollection svc = await loadSvcOp.Task;
-                        if (loadSvcOp.Status != AsyncOperationStatus.Succeeded)
-                        {
-                            Debug.LogError($"Unable to load shader variant collection {runtimeKey} {loadSvcOp.OperationException}");
-                            continue;
-                        }
-                        svc.WarmUp();
-                        Debug.Log($"Warmed up shader variant collection {svc.name}");
-                    }
-                    catch (System.Exception ex)
-                    {
-                        Debug.LogError($"Unable to load shader variant collection {runtimeKey} {ex.Message}\n{ex.StackTrace}");
-                    }
-                    finally
-                    {
-                        if (loadSvcOp.IsValid())
-                            Addressables.Release(loadSvcOp);
-                    }
-                }
-            }
-            finally
-            {
-                if (loadSettingsHandle.IsValid())
-                    Addressables.Release(loadSettingsHandle);
-            }
+            await UniTask.DelayFrame(1, cancellationToken: cancellationToken);
+            LogDownloadMemory("startup complete");
             onEnd?.Invoke();
         }
 
@@ -435,21 +345,7 @@ namespace Insthync.AddressableAssetTools
             System.Action<System.Exception> onError)
         {
             await Download(runtimeKey, onFileSizeRetrieving, onFileSizeRetrieved, onDepsDownloading, onDepsFileDownloading, onDepsDownloaded, onError);
-            AsyncOperationHandle<GameObject> instantiateOp = Addressables.InstantiateAsync(runtimeKey);
-            try
-            {
-                while (!instantiateOp.IsDone)
-                    await UniTask.Yield();
-                if (instantiateOp.Status != AsyncOperationStatus.Succeeded)
-                    throw instantiateOp.OperationException ?? new System.Exception($"Unable to instantiate addressable asset: {runtimeKey}");
-                return instantiateOp.Result;
-            }
-            catch
-            {
-                if (instantiateOp.IsValid())
-                    Addressables.Release(instantiateOp);
-                throw;
-            }
+            return await AddressableAssetsManager.InstantiateAndOwn(() => Addressables.InstantiateAsync(runtimeKey));
         }
 
         public static async Task Download(

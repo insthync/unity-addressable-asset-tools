@@ -12,11 +12,12 @@ using UnityEngine.SceneManagement;
 
 namespace Insthync.AddressableAssetTools
 {
-    public static class AddressableAssetsManager
+    public static partial class AddressableAssetsManager
     {
         private sealed class PendingLoad
         {
             public bool ReleaseRequested;
+            public AsyncOperationHandle Handle;
         }
 
         private static readonly Dictionary<object, PendingLoad> s_loadingAssets = new Dictionary<object, PendingLoad>();
@@ -141,6 +142,8 @@ namespace Insthync.AddressableAssetTools
         public static async UniTask<TType> GetOrLoadObjectAsync<TType>(this AssetReference assetRef)
             where TType : Object
         {
+            if (assetRef == null)
+                return null;
             object runtimeKey = assetRef.RuntimeKey;
             AsyncOperationHandle loadedHandle;
             if (s_loadedAssets.TryGetValue(runtimeKey, out loadedHandle))
@@ -180,6 +183,7 @@ namespace Insthync.AddressableAssetTools
             try
             {
                 handler = Addressables.LoadAssetAsync<TType>(runtimeKey);
+                pendingLoad.Handle = handler;
                 TType result = await handler.ToUniTask();
                 if (pendingLoad.ReleaseRequested)
                 {
@@ -207,13 +211,17 @@ namespace Insthync.AddressableAssetTools
             }
             finally
             {
-                s_loadingAssets.Remove(runtimeKey);
+                if (s_loadingAssets.TryGetValue(runtimeKey, out PendingLoad currentLoad) &&
+                    ReferenceEquals(currentLoad, pendingLoad))
+                    s_loadingAssets.Remove(runtimeKey);
             }
         }
 
         public static TType GetOrLoadObject<TType>(this AssetReference assetRef)
             where TType : Object
         {
+            if (assetRef == null)
+                return null;
             object runtimeKey = assetRef.RuntimeKey;
             if (s_loadedAssets.TryGetValue(runtimeKey, out AsyncOperationHandle loadedHandle))
             {
@@ -233,10 +241,36 @@ namespace Insthync.AddressableAssetTools
             AsyncOperationHandle<TType> handler = default;
             try
             {
+                // A synchronous caller may arrive while an async caller owns this load.
+                // Join that operation rather than starting a second prefab/texture load.
+                if (s_loadingAssets.TryGetValue(runtimeKey, out PendingLoad pendingLoad) &&
+                    !pendingLoad.ReleaseRequested && pendingLoad.Handle.IsValid())
+                {
+                    AsyncOperationHandle sharedHandle = pendingLoad.Handle;
+                    Object sharedResult = sharedHandle.WaitForCompletion() as Object;
+                    if (pendingLoad.ReleaseRequested)
+                        return null;
+                    if (s_loadedAssets.TryGetValue(runtimeKey, out loadedHandle) && loadedHandle.IsValid())
+                        return loadedHandle.Result as TType;
+                    if (!sharedHandle.IsValid() || sharedHandle.Status != AsyncOperationStatus.Succeeded)
+                        return null;
+                    // The async owner will release its reference after seeing this cache entry.
+                    Addressables.ResourceManager.Acquire(sharedHandle);
+                    s_loadedAssets[runtimeKey] = sharedHandle;
+                    return sharedResult as TType;
+                }
+
                 handler = Addressables.LoadAssetAsync<TType>(runtimeKey);
                 TType result = handler.WaitForCompletion();
                 if (handler.Status != AsyncOperationStatus.Succeeded)
                     throw handler.OperationException ?? new System.Exception($"Failed to load addressable asset: {runtimeKey}");
+                // Completion callbacks can populate the cache while WaitForCompletion runs.
+                if (s_loadedAssets.TryGetValue(runtimeKey, out loadedHandle) && loadedHandle.IsValid())
+                {
+                    Addressables.Release(handler);
+                    handler = default;
+                    return loadedHandle.Result as TType;
+                }
                 s_loadedAssets[runtimeKey] = handler;
                 return result;
             }
@@ -343,15 +377,16 @@ namespace Insthync.AddressableAssetTools
             return tempPrefab;
         }
 
-        public static async UniTask<TType[]> GetOrLoadObjectsAsync<TType>(this IEnumerable<AssetReference> assetRefs)
+        public static UniTask<TType[]> GetOrLoadObjectsAsync<TType>(this IEnumerable<AssetReference> assetRefs)
             where TType : Object
         {
-            List<UniTask<TType>> tasks = new List<UniTask<TType>>();
-            foreach (AssetReference assetRef in assetRefs)
-            {
-                tasks.Add(assetRef.GetOrLoadObjectAsync<TType>());
-            }
-            return await UniTask.WhenAll(tasks);
+            return assetRefs.GetOrLoadObjectsAsync<TType>(4);
+        }
+
+        public static UniTask<TType[]> GetOrLoadObjectsAsync<TType>(this IEnumerable<AssetReference> assetRefs, int maxConcurrentLoads)
+            where TType : Object
+        {
+            return LoadInBatches(assetRefs, asset => asset.GetOrLoadObjectAsync<TType>(), maxConcurrentLoads);
         }
 
         public static TType[] GetOrLoadObjects<TType>(this IEnumerable<AssetReference> assetRefs)
@@ -365,15 +400,16 @@ namespace Insthync.AddressableAssetTools
             return results.ToArray();
         }
 
-        public static async UniTask<TType[]> GetOrLoadAssetsAsync<TType>(this IEnumerable<AssetReference> assetRefs)
+        public static UniTask<TType[]> GetOrLoadAssetsAsync<TType>(this IEnumerable<AssetReference> assetRefs)
             where TType : Component
         {
-            List<UniTask<TType>> tasks = new List<UniTask<TType>>();
-            foreach (AssetReference assetRef in assetRefs)
-            {
-                tasks.Add(assetRef.GetOrLoadAssetAsync<TType>());
-            }
-            return await UniTask.WhenAll(tasks);
+            return assetRefs.GetOrLoadAssetsAsync<TType>(4);
+        }
+
+        public static UniTask<TType[]> GetOrLoadAssetsAsync<TType>(this IEnumerable<AssetReference> assetRefs, int maxConcurrentLoads)
+            where TType : Component
+        {
+            return LoadInBatches(assetRefs, asset => asset.GetOrLoadAssetAsync<TType>(), maxConcurrentLoads);
         }
 
         public static TType[] GetOrLoadAssets<TType>(this IEnumerable<AssetReference> assetRefs)
@@ -387,14 +423,14 @@ namespace Insthync.AddressableAssetTools
             return results.ToArray();
         }
 
-        public static async UniTask<GameObject[]> GetOrLoadAssetsAsync(this IEnumerable<AssetReference> assetRefs)
+        public static UniTask<GameObject[]> GetOrLoadAssetsAsync(this IEnumerable<AssetReference> assetRefs)
         {
-            List<UniTask<GameObject>> tasks = new List<UniTask<GameObject>>();
-            foreach (AssetReference assetRef in assetRefs)
-            {
-                tasks.Add(assetRef.GetOrLoadAssetAsync());
-            }
-            return await UniTask.WhenAll(tasks);
+            return assetRefs.GetOrLoadAssetsAsync(4);
+        }
+
+        public static UniTask<GameObject[]> GetOrLoadAssetsAsync(this IEnumerable<AssetReference> assetRefs, int maxConcurrentLoads)
+        {
+            return LoadInBatches(assetRefs, asset => asset.GetOrLoadAssetAsync(), maxConcurrentLoads);
         }
 
         public static GameObject[] GetOrLoadAssets(this IEnumerable<AssetReference> assetRefs)
@@ -411,22 +447,14 @@ namespace Insthync.AddressableAssetTools
         {
             if ((prefabs == null || prefabs.Length <= 0) && addressablePrefabs != null && addressablePrefabs.Length > 0)
             {
-                List<UniTask<GameObject>> instantiateTasks = new List<UniTask<GameObject>>();
                 foreach (AssetReference addressablePrefab in addressablePrefabs)
                 {
                     if (!addressablePrefab.IsDataValid())
                         continue;
-                    instantiateTasks.Add(Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, transform.position, transform.rotation, transform, true).ToUniTask());
-                }
-                GameObject[] results = await UniTask.WhenAll(instantiateTasks);
-                if (instantiatedObjects != null)
-                {
-                    foreach (GameObject result in results)
-                    {
-                        if (result == null)
-                            continue;
+                    GameObject result = await InstantiateAndOwn(
+                        () => Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, transform.position, transform.rotation, transform, true), transform);
+                    if (result != null && instantiatedObjects != null)
                         instantiatedObjects.Add(result);
-                    }
                 }
                 return;
             }
@@ -446,22 +474,14 @@ namespace Insthync.AddressableAssetTools
         {
             if ((prefabs == null || prefabs.Length <= 0) && addressablePrefabs != null && addressablePrefabs.Length > 0)
             {
-                List<UniTask<GameObject>> instantiateTasks = new List<UniTask<GameObject>>();
                 foreach (AssetReference addressablePrefab in addressablePrefabs)
                 {
                     if (!addressablePrefab.IsDataValid())
                         continue;
-                    instantiateTasks.Add(Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, position, rotation, transform, true).ToUniTask());
-                }
-                GameObject[] results = await UniTask.WhenAll(instantiateTasks);
-                if (instantiatedObjects != null)
-                {
-                    foreach (GameObject result in results)
-                    {
-                        if (result == null)
-                            continue;
+                    GameObject result = await InstantiateAndOwn(
+                        () => Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, position, rotation, transform, true), transform);
+                    if (result != null && instantiatedObjects != null)
                         instantiatedObjects.Add(result);
-                    }
                 }
                 return;
             }
@@ -485,7 +505,8 @@ namespace Insthync.AddressableAssetTools
         {
             if (prefab == null && addressablePrefab.IsDataValid())
             {
-                return await Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, transform.position, transform.rotation, transform, true).ToUniTask();
+                return await InstantiateAndOwn(
+                    () => Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, transform.position, transform.rotation, transform, true), transform);
             }
             if (prefab != null)
             {
@@ -498,16 +519,15 @@ namespace Insthync.AddressableAssetTools
             where T : Component
         {
             GameObject instantiatedObject = await addressablePrefab.InstantiateObjectOrUsePrefab(prefab, transform);
-            if (instantiatedObject != null)
-                return instantiatedObject.GetComponent<T>();
-            return null;
+            return GetComponentOrRelease<T>(instantiatedObject);
         }
 
         public static async UniTask<GameObject> InstantiateObjectOrUsePrefab(this AssetReference addressablePrefab, GameObject prefab, Vector3 position, Quaternion rotation, Transform transform = null)
         {
             if (prefab == null && addressablePrefab.IsDataValid())
             {
-                return await Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, position, rotation, transform, true).ToUniTask();
+                return await InstantiateAndOwn(
+                    () => Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, position, rotation, transform, true), transform);
             }
             if (prefab != null)
             {
@@ -523,16 +543,15 @@ namespace Insthync.AddressableAssetTools
             where T : Component
         {
             GameObject instantiatedObject = await addressablePrefab.InstantiateObjectOrUsePrefab(prefab, position, rotation, transform);
-            if (instantiatedObject != null)
-                return instantiatedObject.GetComponent<T>();
-            return null;
+            return GetComponentOrRelease<T>(instantiatedObject);
         }
 
         public static async UniTask<GameObject> InstantiateObject(this AssetReference addressablePrefab, Transform transform)
         {
             if (addressablePrefab.IsDataValid())
             {
-                return await Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, transform.position, transform.rotation, transform, true).ToUniTask();
+                return await InstantiateAndOwn(
+                    () => Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, transform.position, transform.rotation, transform, true), transform);
             }
             return null;
         }
@@ -541,16 +560,15 @@ namespace Insthync.AddressableAssetTools
             where T : Component
         {
             GameObject instantiatedObject = await addressablePrefab.InstantiateObject(transform);
-            if (instantiatedObject != null)
-                return instantiatedObject.GetComponent<T>();
-            return null;
+            return GetComponentOrRelease<T>(instantiatedObject);
         }
 
         public static async UniTask<GameObject> InstantiateObject(this AssetReference addressablePrefab, Vector3 position, Quaternion rotation, Transform transform = null)
         {
             if (addressablePrefab.IsDataValid())
             {
-                return await Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, position, rotation, transform, true).ToUniTask();
+                return await InstantiateAndOwn(
+                    () => Addressables.InstantiateAsync(addressablePrefab.RuntimeKey, position, rotation, transform, true), transform);
             }
             return null;
         }
@@ -559,9 +577,7 @@ namespace Insthync.AddressableAssetTools
             where T : Component
         {
             GameObject instantiatedObject = await addressablePrefab.InstantiateObject(position, rotation, transform);
-            if (instantiatedObject != null)
-                return instantiatedObject.GetComponent<T>();
-            return null;
+            return GetComponentOrRelease<T>(instantiatedObject);
         }
 
         public static void Release(object runtimeKey)
@@ -570,12 +586,14 @@ namespace Insthync.AddressableAssetTools
                 pendingLoad.ReleaseRequested = true;
             if (s_loadedAssets.TryGetValue(runtimeKey, out AsyncOperationHandle handle))
             {
+                // A release callback may immediately request this key again.
+                s_loadedAssets.Remove(runtimeKey);
                 if (handle.IsValid())
                     Addressables.Release(handle);
             }
-            s_loadedAssets.Remove(runtimeKey);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Debug.Log($"Released addressable asset: {runtimeKey}");
+            Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null,
+                "Released addressable asset: {0}", runtimeKey);
 #endif
         }
 
@@ -583,12 +601,21 @@ namespace Insthync.AddressableAssetTools
         {
             foreach (PendingLoad pendingLoad in s_loadingAssets.Values)
                 pendingLoad.ReleaseRequested = true;
-            List<object> keys = new List<object>(s_loadedAssets.Keys);
-            for (int i = 0; i < keys.Count; ++i)
+            var handles = new List<AsyncOperationHandle>(s_loadedAssets.Values);
+            // Detach this generation before callbacks can start fresh loads.
+            s_loadedAssets.Clear();
+            s_loadedAssets.TrimExcess();
+            foreach (AsyncOperationHandle handle in handles)
             {
-                Release(keys[i]);
+                if (handle.IsValid())
+                    Addressables.Release(handle);
             }
             ClearResourceLocationCache();
+            s_resourceLocations.TrimExcess();
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null,
+                "Released {0} cached addressable assets.", handles.Count);
+#endif
         }
     }
 }
