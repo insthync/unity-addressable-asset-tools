@@ -29,6 +29,8 @@ namespace Insthync.AddressableAssetTools
         [Tooltip("Maximum shader variants to warm up per frame. Individual variants can still take longer than one frame.")]
         [Min(1)]
         public int shaderVariantsPerFrame = 32;
+        [Tooltip("Graphics states (shader programs and pipelines) created per frame during startup warmup")]
+        public int graphicsStatesPerFrame = 20;
         [Header("Events")]
         public UnityEvent onStart = new UnityEvent();
         public UnityEvent onEnd = new UnityEvent();

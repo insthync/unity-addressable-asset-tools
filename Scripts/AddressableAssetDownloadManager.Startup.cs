@@ -5,12 +5,18 @@ using System.Collections.Generic;
 using System.Threading;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
+using UnityEngine.Experimental.Rendering;
 using UnityEngine.ResourceManagement.AsyncOperations;
 
 namespace Insthync.AddressableAssetTools
 {
     public partial class AddressableAssetDownloadManager
     {
+        // Warmed graphics state collections stay loaded for the app lifetime. Releasing them could
+        // unload their shader bundles before first use and discard the compiled programs/pipelines.
+        private static readonly List<AsyncOperationHandle<GraphicsStateCollection>> s_retainedGraphicsStateHandles =
+            new List<AsyncOperationHandle<GraphicsStateCollection>>();
+
         private async UniTask<bool> InitializeStartupAssets(CancellationToken cancellationToken)
         {
             AsyncOperationHandle<AddressableAssetDownloadManagerSettings> handle = default;
@@ -75,6 +81,21 @@ namespace Insthync.AddressableAssetTools
                     await UniTask.DelayFrame(1, cancellationToken: cancellationToken);
                 }
                 LogDownloadMemory("shader warmup ready");
+
+                IList<AssetReferenceT<GraphicsStateCollection>> graphicsStateCollections = settings.GraphicsStateCollections;
+                for (int i = 0; i < graphicsStateCollections.Count; i++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    AssetReferenceT<GraphicsStateCollection> collection = graphicsStateCollections[i];
+                    if (collection == null || !collection.RuntimeKeyIsValid())
+                        continue;
+                    object key = collection.RuntimeKey;
+                    if (!warmedCollections.Add(key))
+                        continue;
+                    await WarmUpStartupGraphicsStates(key, cancellationToken);
+                    await UniTask.DelayFrame(1, cancellationToken: cancellationToken);
+                }
+                LogDownloadMemory("graphics state warmup ready");
                 return true;
             }
             finally
@@ -163,6 +184,53 @@ namespace Insthync.AddressableAssetTools
                     Addressables.Release(handle);
                 LogStartupDuration("shader collection", key, clock.ElapsedMilliseconds);
                 LogDownloadMemory($"shader collection released {key}");
+            }
+        }
+
+        private async UniTask WarmUpStartupGraphicsStates(object key, CancellationToken cancellationToken)
+        {
+            AsyncOperationHandle<GraphicsStateCollection> handle = default;
+            bool retained = false;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                handle = Addressables.LoadAssetAsync<GraphicsStateCollection>(key);
+                await handle.Task;
+                cancellationToken.ThrowIfCancellationRequested();
+                if (handle.Status != AsyncOperationStatus.Succeeded || handle.Result == null)
+                    throw handle.OperationException ?? new Exception($"Unable to load graphics state collection: {key}");
+                GraphicsStateCollection collection = handle.Result;
+                if (collection.runtimePlatform != Application.platform ||
+                    collection.graphicsDeviceType != SystemInfo.graphicsDeviceType)
+                {
+                    // Recorded for another platform or graphics API; release it
+                    return;
+                }
+                LogDownloadDiagnostic($"[Addressables Download] Graphics state collection {collection.name}: {collection.totalGraphicsStateCount:N0} states, {collection.variantCount:N0} variants.");
+                int perFrame = Mathf.Max(1, graphicsStatesPerFrame);
+                while (!collection.isWarmedUp)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    collection.WarmUpProgressively(perFrame).Complete();
+                    await UniTask.DelayFrame(1, cancellationToken: cancellationToken);
+                }
+                s_retainedGraphicsStateHandles.Add(handle);
+                retained = true;
+                Debug.Log($"Warmed up graphics state collection {collection.name}");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Unable to warm up graphics state collection {key} {ex.Message}\n{ex.StackTrace}");
+            }
+            finally
+            {
+                if (!retained && handle.IsValid())
+                    Addressables.Release(handle);
+                LogStartupDuration("graphics state collection", key, clock.ElapsedMilliseconds);
             }
         }
 
