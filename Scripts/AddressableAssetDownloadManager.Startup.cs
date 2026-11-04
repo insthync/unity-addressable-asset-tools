@@ -5,17 +5,21 @@ using System.Collections.Generic;
 using System.Threading;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
+#if UNITY_6000_0_OR_NEWER
 using UnityEngine.Experimental.Rendering;
+#endif
 using UnityEngine.ResourceManagement.AsyncOperations;
 
 namespace Insthync.AddressableAssetTools
 {
     public partial class AddressableAssetDownloadManager
     {
+#if UNITY_6000_0_OR_NEWER
         // Warmed graphics state collections stay loaded for the app lifetime. Releasing them could
         // unload their shader bundles before first use and discard the compiled programs/pipelines.
         private static readonly List<AsyncOperationHandle<GraphicsStateCollection>> s_retainedGraphicsStateHandles =
             new List<AsyncOperationHandle<GraphicsStateCollection>>();
+#endif
 
         private async UniTask<bool> InitializeStartupAssets(CancellationToken cancellationToken)
         {
@@ -82,6 +86,7 @@ namespace Insthync.AddressableAssetTools
                 }
                 LogDownloadMemory("shader warmup ready");
 
+#if UNITY_6000_0_OR_NEWER
                 IList<AssetReferenceT<GraphicsStateCollection>> graphicsStateCollections = settings.GraphicsStateCollections;
                 for (int i = 0; i < graphicsStateCollections.Count; i++)
                 {
@@ -96,6 +101,7 @@ namespace Insthync.AddressableAssetTools
                     await UniTask.DelayFrame(1, cancellationToken: cancellationToken);
                 }
                 LogDownloadMemory("graphics state warmup ready");
+#endif
                 return true;
             }
             finally
@@ -187,6 +193,7 @@ namespace Insthync.AddressableAssetTools
             }
         }
 
+#if UNITY_6000_0_OR_NEWER
         private async UniTask WarmUpStartupGraphicsStates(object key, CancellationToken cancellationToken)
         {
             AsyncOperationHandle<GraphicsStateCollection> handle = default;
@@ -233,6 +240,7 @@ namespace Insthync.AddressableAssetTools
                 LogStartupDuration("graphics state collection", key, clock.ElapsedMilliseconds);
             }
         }
+#endif
 
         internal static async UniTask WarmUpShaderVariants(
             Func<int, bool> warmUpStep,
